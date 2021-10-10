@@ -85,7 +85,7 @@ impl Tui {
     pub fn highlight_and_render(
         &self,
         index: &str,
-        available_scripts: Vec<String>,
+        available_scripts: &[String],
     ) -> Result<(), Box<dyn Error>> {
         let index_as_number: usize = index.parse().unwrap();
 

@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .get_matches();
 
     let mut scripts_folder_path = PathBuf::new();
-    scripts_folder_path.push(home.to_owned());
+    scripts_folder_path.push(&home);
     scripts_folder_path.push(SCRIPTS_FOLDER_NAME);
     let scripts_folder_path_str = &format!("{}", scripts_folder_path.display())[..];
 
@@ -105,20 +105,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         break;
     }
 
-    let chosen_script =
-        fs::read_to_string(available_scripts[chosen_idx].to_owned());
+    let mut chosen_script =
+        fs::read_to_string(&available_scripts[chosen_idx]).expect("Couldn't read chosen script.");
 
     let shared_koto_runtime = Arc::new(Mutex::new(Koto::default()));
     let mut runtime = lock!(shared_koto_runtime);
     
-    runtime.compile(&chosen_script.unwrap())?;
-    runtime.set_script_path(Some(PathBuf::from(
-        available_scripts[chosen_idx].to_owned(),
-    )));
+    runtime.compile(&chosen_script)?;
+    runtime.set_script_path(Some(PathBuf::from(&available_scripts[chosen_idx])));
 
     tui.highlight_and_render(
         &chosen_idx.to_string(),
-        available_scripts.to_owned(),
+        &*available_scripts,
     )?;
 
     let mep_in = MidiInput::new("mep_input")?;
@@ -162,7 +160,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                     let message_values = message.iter().map(|byte| Value::Number(ValueNumber::from(byte))).collect::<Vec<Value>>();
                                     // Call "midi.listen" function in script with the midi message.
                                     match runtime.call_function(
-                                        message_listener.to_owned(),
+                                        message_listener.clone(),
                                         &[Value::List(ValueList::from_slice(&message_values))],
                                     ) {
                                         Ok(_) => Ok(()),
@@ -233,7 +231,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let (sender, receiver) = channel();
         let mut watcher = watcher(sender, Duration::from_secs(1)).unwrap();
 
-        let mut watcher_path = home.to_owned();
+        let mut watcher_path = home.clone();
         watcher_path.push(SCRIPTS_FOLDER_NAME);
 
         watcher
@@ -247,7 +245,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         Some(extension) => {
                           if "koto" == &format!("{:?}",extension)[..] {
                             let chosen_script = fs::read_to_string(
-                            lock!(shared_available_scripts_clone)[chosen_idx].to_owned(),
+                            &lock!(shared_available_scripts_clone)[chosen_idx],
                             ).expect("Couldn't read chosen script.");
                             let mut runtime = lock!(shared_koto_runtime_clone);
                             // Handle this unwrap?
@@ -276,9 +274,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     // We loop here for other choices of scripts.
     loop {
         
-        let mut choice = String::new();
         stdin().read_line(&mut choice)?;
-        let chosen_idx: usize = choice.trim().parse()?;
+        chosen_idx = choice.trim().parse()?;
         
         // If index is out of bounds.
         if chosen_idx > available_scripts.len() - 1 {
@@ -286,14 +283,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             continue;
         }
         
-        let chosen_script =
-            fs::read_to_string(available_scripts[chosen_idx].to_owned()).expect("Couldn't read chosen script.");
+        chosen_script =
+            fs::read_to_string(&available_scripts[chosen_idx]).expect("Couldn't read chosen script.");
         // Handle this unwrap?
         let chunk = runtime.compile(&chosen_script).unwrap();
         // Handle this unwrap?
         runtime.run_chunk(chunk).unwrap();
         // Highlight choice
-        tui.highlight_and_render(&chosen_idx.to_string(), available_scripts.to_owned())?;
+        tui.highlight_and_render(&chosen_idx.to_string(), &*available_scripts)?;
     }
 }
 
@@ -319,7 +316,6 @@ pub fn copy_directory_contents<U: AsRef<Path>, V: AsRef<Path>>(from: U, to: V) -
             output_root.join(&src)
         };
         if fs::metadata(&dest).is_err() {
-            // println!(" mkdir: {:?}", dest);
             fs::create_dir_all(&dest)?;
         }
 
@@ -332,12 +328,9 @@ pub fn copy_directory_contents<U: AsRef<Path>, V: AsRef<Path>>(from: U, to: V) -
                 match path.file_name() {
                     Some(filename) => {
                         let dest_path = dest.join(filename);
-                        // println!("  copy: {:?} -> {:?}", &path, &dest_path);
                         fs::copy(&path, &dest_path)?;
                     }
-                    None => {
-                        // println!("failed: {:?}", path);
-                    }
+                    None => {}
                 }
             }
         }
