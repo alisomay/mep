@@ -96,10 +96,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     tui.wait_for_choice()?;
     loop {
         stdin().read_line(&mut choice)?;
-        chosen_idx = choice.trim().parse()?;
+        chosen_idx = match choice.trim().parse() {
+            Ok(idx) => idx,
+            Err(_) => {
+               choice.clear();
+               tui.ignore_choice()?;
+               continue;
+            }
+        };
         // Here check if index is out of bounds.
         if chosen_idx > max_idx {
-            tui.ignore_choice(chosen_idx)?;
+            choice.clear();
+            tui.ignore_choice()?;
             continue;
         }
         break;
@@ -221,7 +229,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         _ => runtime_error!(send_error_message),
     });
 
-    runtime.prelude().add_map("midi", midi_module);
+    let mut prelude = runtime.prelude();
+    prelude.add_map("midi", midi_module);
+    prelude.add_value("random", koto_random::make_module());
     runtime.run()?;
 
     let shared_koto_runtime_clone = shared_koto_runtime.clone();
@@ -275,12 +285,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     // We loop here for other choices of scripts.
     loop {
         
+        let mut choice = String::new();
         stdin().read_line(&mut choice)?;
-        chosen_idx = choice.trim().parse()?;
-        
-        // If index is out of bounds.
-        if chosen_idx > available_scripts.len() - 1 {
-            tui.ignore_choice(chosen_idx)?;
+        chosen_idx = match choice.trim().parse() {
+            Ok(idx) => idx,
+            Err(_) => {
+               choice.clear();
+               tui.ignore_choice()?;
+               continue;
+            }
+        };
+        // Here check if index is out of bounds.
+        if chosen_idx > max_idx {
+            choice.clear();
+            tui.ignore_choice()?;
             continue;
         }
         

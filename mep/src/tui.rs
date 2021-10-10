@@ -62,24 +62,13 @@ impl Tui {
         Ok(())
     }
 
-    pub fn ignore_choice(&self, index: usize) -> Result<(), Box<dyn Error>> {
-        if index > 9 {
-            self.stdout.move_cursor_up(1)?;
-            self.stdout.move_cursor_right(MSG.len() + 4)?;
-            self.stdout.clear_chars(3)?;
-        } else if index > 99 {
-            self.stdout.move_cursor_up(1)?;
-            self.stdout.move_cursor_right(MSG.len() + 3)?;
-            self.stdout.clear_chars(2)?;
-        } else if index > 999 {
-            self.stdout.move_cursor_up(1)?;
-            self.stdout.move_cursor_right(MSG.len() + 5)?;
-            self.stdout.clear_chars(4)?;
-        } else {
-            self.stdout.move_cursor_up(1)?;
-            self.stdout.move_cursor_right(MSG.len() + 2)?;
-            self.stdout.clear_chars(1)?;
-        }
+    pub fn ignore_choice(&self) -> Result<(), Box<dyn Error>> {
+        self.stdout.move_cursor_up(1)?;
+        self.stdout.clear_line()?;
+        self.write_line(MSG.green())?;
+        self.stdout.move_cursor_up(1)?;
+        self.stdout.move_cursor_right(MSG.len() + 1)?;
+
         Ok(())
     }
     pub fn highlight_and_render(

@@ -1,21 +1,5 @@
-[package]
-name = "mep"
-version = "0.0.1"
-authors = ["alisomay <alisomay@runbox.com>"]
-edition = "2021"
-license = "MIT"
-description = "A command line midi event processor."
-homepage = "https://github.com/alisomay/mep"
-repository = "https://github.com/alisomay/mep"
-keywords = ["midi", "event processor", "command line"]
-
-[dependencies]
-clap = "2.33.3"
-console = "0.14.1"
-crossterm = "0.21.0"
-dirs = "4.0.0"
-koto = { git = "https://github.com/koto-lang/koto", branch= "main" } 
-koto_midi = { git = "https://github.com/alisomay/koto_midi", branch= "main" } 
-midir = "0.7.0"
-notify = "4.0.17"
-
+[workspace]
+members = [
+  "mep",
+  "koto_libraries/*",
+]
