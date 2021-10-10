@@ -28,6 +28,12 @@ If `.mep` folder exists but empty, **mep** will notify you about this, ask you t
 
 As soon as you select a script from the enumerated list by entering the index number and pressing enter, the virtual ports will be created and the event processing will begin.
 
+### Editing
+
+When an instance of **mep** is running. `.mep` folder is being watched for changes. Editing your scripts will be reflected immediately.
+
+Look for info in the [koto main repository](https://github.com/koto-lang/koto) to see if there is syntax highlighting available for your editor.
+
 ## Some answers to possible questions
 
 - _What are koto scripts?_
