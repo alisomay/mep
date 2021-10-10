@@ -1,0 +1,17 @@
+import midi
+
+history = []
+for i in 0..127
+  history.push(())
+
+midi.listen = |message| 
+  message = midi.parse message
+  match message.type
+    midi.types.note_on if message.velocity > 0 then
+      msg = midi.message.note_on [message.note, message.velocity, message.note % 12]
+      history[message.note] = msg
+      midi.send msg.pack()
+    midi.types.note_on if message.velocity == 0 then
+      note_off = midi.message.note_on [history[message.note].note,0,history[message.note].channel]
+      midi.send note_off.pack()
+
