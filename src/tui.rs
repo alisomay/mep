@@ -10,27 +10,11 @@ pub struct Tui {
 }
 impl Tui {
     pub fn new() -> Self {
-        let tui = Self {
+        Self {
             stdout: Term::stdout(),
-        };
-        // tui.hide_cursor()
-        //     .expect("Couldn't hide terminal cursor on construction.");
-        tui
+        }
     }
 
-    pub fn _hide_cursor(&self) -> Result<(), Box<dyn Error>> {
-        self.stdout.hide_cursor()?;
-        Ok(())
-    }
-    pub fn _flush(&self) -> Result<(), Box<dyn Error>> {
-        self.stdout.flush()?;
-        Ok(())
-    }
-    pub fn _clear(&self) -> Result<(), Box<dyn Error>> {
-        self.stdout.move_cursor_up(1)?;
-        self.stdout.clear_line()?;
-        Ok(())
-    }
     fn clear_lines(&self, lines: usize) -> Result<(), Box<dyn Error>> {
         self.stdout.move_cursor_up(lines)?;
         self.stdout.clear_line()?;

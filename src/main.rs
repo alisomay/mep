@@ -26,6 +26,12 @@ use notify::{watcher, DebouncedEvent, RecursiveMode, Watcher};
 
 const SCRIPTS_FOLDER_NAME: &'static str = ".mep";
 
+macro_rules! lock {
+    ($i:ident) => {
+        $i.lock().unwrap()
+    };
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     // Handle unwrap
     let home = home_dir().unwrap();
@@ -66,7 +72,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let script_paths = fs::read_dir(scripts_folder_path)?;
     tui.intro()?;
 
-    let available_scripts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+    let shared_available_scripts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+    let mut available_scripts = lock!(shared_available_scripts);
+    
     for (index, path) in script_paths.enumerate() {
         let path_buf = path?.path();
         tui.elements_to_choose(
@@ -75,17 +83,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             &format!("{:?}", path_buf.file_name().unwrap()),
         )?;
         let full_path = format!("{}", path_buf.display());
-        available_scripts.lock().unwrap().push(full_path);
+        available_scripts.push(full_path);
     }
 
-    if available_scripts.lock().unwrap().len() == 0 {
+    if available_scripts.len() == 0 {
         tui.empty_scripts_folder()?;
         std::process::exit(0x0);
     }
 
     let mut choice = String::new();
     let mut chosen_idx: usize;
-    let max_idx = available_scripts.lock().unwrap().len() - 1;
+    let max_idx = available_scripts.len() - 1;
     tui.wait_for_choice()?;
     loop {
         stdin().read_line(&mut choice)?;
@@ -99,17 +107,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let chosen_script =
-        fs::read_to_string(available_scripts.lock().unwrap()[chosen_idx].to_owned());
+        fs::read_to_string(available_scripts[chosen_idx].to_owned());
 
-    let koto = Arc::new(Mutex::new(Koto::default()));
-    koto.lock().unwrap().compile(&chosen_script.unwrap())?;
-    koto.lock().unwrap().set_script_path(Some(PathBuf::from(
-        available_scripts.lock().unwrap()[chosen_idx].to_owned(),
+    let shared_koto_runtime = Arc::new(Mutex::new(Koto::default()));
+    let mut runtime = lock!(shared_koto_runtime);
+    
+    runtime.compile(&chosen_script.unwrap())?;
+    runtime.set_script_path(Some(PathBuf::from(
+        available_scripts[chosen_idx].to_owned(),
     )));
 
     tui.highlight_and_render(
         &chosen_idx.to_string(),
-        available_scripts.lock().unwrap().to_owned(),
+        available_scripts.to_owned(),
     )?;
 
     let mep_in = MidiInput::new("mep_input")?;
@@ -134,10 +144,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         None => "mep_out",
     };
 
-    let mep_out_port = Arc::new(Mutex::new(
+    let shared_mep_out_port = Arc::new(Mutex::new(
         mep_out.create_virtual(mep_output_port_name).expect("Couldn't create a virtual output midi port."),
     ));
-    let runtime = koto.clone();
+    
+    let shared_koto_runtime_clone = shared_koto_runtime.clone();
     let _mep_in_port = mep_in.create_virtual(
         mep_input_port_name,
         move |_stamp, message, _| {
@@ -151,13 +162,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
 
             // Assess this.
-            let _res: Result<(), RuntimeError> = match runtime.try_lock() {
-                Ok(mut g) => match g.prelude().data().get_with_string("midi") {
+            let _res: Result<(), RuntimeError> = match shared_koto_runtime_clone.try_lock() {
+                Ok(mut runtime) => match runtime.prelude().data().get_with_string("midi") {
                     Some(midi_map) => match midi_map {
                         Value::Map(map) => match map.data().get_with_string("listen") {
                             Some(listener) => match listener {
                                 Value::Function(_) => {
-                                    match g.call_function(
+                                    match runtime.call_function(
                                         listener.clone(),
                                         &[Value::List(message_value_list)],
                                     ) {
@@ -209,7 +220,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 })
                 .collect::<std::result::Result<Vec<u8>, RuntimeError>>();
             let _res: Result<_, RuntimeError> =
-                match mep_out_port.lock().unwrap().send(&msg.unwrap()[..]) {
+                match lock!(shared_mep_out_port).send(&msg.unwrap()[..]) {
                     Ok(_) => Ok(()),
                     Err(e) => {
                         runtime_error!(format!("{}", e))
@@ -220,11 +231,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         _ => runtime_error!(error_message),
     });
 
-    koto.lock().unwrap().prelude().add_map("midi", midi_module);
-    koto.lock().unwrap().run()?;
+    runtime.prelude().add_map("midi", midi_module);
+    runtime.run()?;
 
-    let runtime = koto.clone();
-    let available_scripts_clone = available_scripts.clone();
+    let shared_koto_runtime_clone = shared_koto_runtime.clone();
+    let shared_available_scripts_clone = shared_available_scripts.clone();
 
     // Script watcher
     std::thread::spawn(move || loop {
@@ -245,12 +256,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                         Some(extension) => {
                           if "koto" == &format!("{:?}",extension)[..] {
                             let chosen_script = fs::read_to_string(
-                            available_scripts_clone.lock().unwrap()[chosen_idx].to_owned(),
+                            lock!(shared_available_scripts_clone)[chosen_idx].to_owned(),
                             ).expect("Couldn't read chosen script.");
+                            let mut runtime = lock!(shared_koto_runtime_clone);
                             // Handle this unwrap?
-                            let chunk = runtime.lock().unwrap().compile(&chosen_script).unwrap();
+                            let chunk = runtime.compile(&chosen_script).unwrap();
                             // Handle this unwrap?
-                            runtime.lock().unwrap().run_chunk(chunk).unwrap();
+                            runtime.run_chunk(chunk).unwrap();
                           }
                           else {
                               // Error wrong extension
@@ -270,7 +282,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    // We loop here for other choices of processors.
+    // We loop here for other choices of scripts.
     loop {
         
         let mut choice = String::new();
@@ -278,19 +290,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         let chosen_idx: usize = choice.trim().parse()?;
         
         // If index is out of bounds.
-        if chosen_idx > available_scripts.lock().unwrap().len() - 1 {
+        if chosen_idx > available_scripts.len() - 1 {
             tui.ignore_choice(chosen_idx)?;
             continue;
         }
         
         let chosen_script =
-            fs::read_to_string(available_scripts.lock().unwrap()[chosen_idx].to_owned()).expect("Couldn't read chosen script.");
+            fs::read_to_string(available_scripts[chosen_idx].to_owned()).expect("Couldn't read chosen script.");
         // Handle this unwrap?
-        let chunk = koto.lock().unwrap().compile(&chosen_script).unwrap();
+        let chunk = runtime.compile(&chosen_script).unwrap();
         // Handle this unwrap?
-        koto.lock().unwrap().run_chunk(chunk).unwrap();
+        runtime.run_chunk(chunk).unwrap();
         // Highlight choice
-        tui.highlight_and_render(&chosen_idx.to_string(), available_scripts.lock().unwrap().to_owned())?;
+        tui.highlight_and_render(&chosen_idx.to_string(), available_scripts.to_owned())?;
     }
 }
 
