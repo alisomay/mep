@@ -10,6 +10,7 @@ repository = "https://github.com/alisomay/mep"
 keywords = ["midi", "event processor", "command line"]
 
 [dependencies]
+clap = "2.33.3"
 console = "0.14.1"
 crossterm = "0.21.0"
 dirs = "4.0.0"

@@ -20,11 +20,25 @@ use midir::{
     MidiInput, MidiOutput,
 };
 
+use clap::{App, Arg};
+
 use notify::{watcher, DebouncedEvent, RecursiveMode, Watcher};
 
 const SCRIPTS_FOLDER_NAME: &'static str = ".mep";
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let matches = App::new(env!("CARGO_PKG_NAME"))
+        .version(env!("CARGO_PKG_VERSION"))
+        .arg(
+            Arg::with_name("port")
+                .help("You may give a name to your midi io port")
+                .short("p")
+                .long("port")
+                .value_name("name")
+                .takes_value(true),
+        )
+        .get_matches();
+
     let tui = Tui::new();
     let home = home_dir().unwrap();
 
@@ -103,11 +117,29 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut midi_module = koto_midi::make_module();
 
+    let mut input_name = String::from("_in");
+    let mut output_name = String::from("_out");
     let mep_in = MidiInput::new("mep_in")?;
     let mep_out = MidiOutput::new("mep_out")?;
 
+    let mep_in_port_name = match matches.value_of("port") {
+        Some(port_name) => {
+            input_name.insert_str(0, port_name);
+            &input_name
+        }
+        None => "mep_in",
+    };
+
+    let mep_out_port_name = match matches.value_of("port") {
+        Some(port_name) => {
+            output_name.insert_str(0, port_name);
+            &output_name
+        }
+        None => "mep_out",
+    };
+
     let _mep_in_port = mep_in.create_virtual(
-        "mep_in",
+        mep_in_port_name,
         move |_stamp, message, _| {
             let message_value_list = ValueList::default();
             for i in 0..message.len() {
@@ -154,7 +186,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         (),
     )?;
 
-    let mep_out_port = Arc::new(Mutex::new(mep_out.create_virtual("mep_out").unwrap()));
+    let mep_out_port = Arc::new(Mutex::new(
+        mep_out.create_virtual(mep_out_port_name).unwrap(),
+    ));
     midi_module.add_fn("send", move |vm, args| match vm.get_args(&args) {
         [Value::List(message)] => {
             let msg = message
