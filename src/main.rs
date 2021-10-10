@@ -85,8 +85,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let chosen_script =
         fs::read_to_string(available_scripts.lock().unwrap()[chosen_idx].to_owned());
-    let chunk = koto.lock().unwrap().compile(&chosen_script.unwrap());
-    koto.lock().unwrap().run_chunk(chunk.unwrap()).unwrap();
+    koto.lock().unwrap().compile(&chosen_script.unwrap())?;
 
     let available_scripts_copy = available_scripts.lock().unwrap().to_owned();
     // Highlight choice
@@ -184,8 +183,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         _ => runtime_error!("send requires a list of positive integers"),
     });
 
-    let mut prelude = koto.lock().unwrap().prelude();
-    prelude.add_map("midi", midi_module);
+    koto.lock().unwrap().prelude().add_map("midi", midi_module);
     koto.lock().unwrap().run()?;
 
     // Watcher
