@@ -27,6 +27,9 @@ use notify::{watcher, DebouncedEvent, RecursiveMode, Watcher};
 const SCRIPTS_FOLDER_NAME: &'static str = ".mep";
 
 fn main() -> Result<(), Box<dyn Error>> {
+    // Handle unwrap
+    let home = home_dir().unwrap();
+
     let matches = App::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
         .arg(
@@ -40,9 +43,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         .get_matches();
 
     let tui = Tui::new();
-    let home = home_dir().unwrap();
-
-    let koto = Arc::new(Mutex::new(Koto::default()));
 
     let mut scripts_folder_path = PathBuf::new();
     scripts_folder_path.push(home.to_owned());
@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         examples_path.push(env!("CARGO_MANIFEST_DIR"));
         examples_path.push("example_scripts");
 
-        copy(
+        copy_directory_contents(
             &format!("{}", examples_path.display()),
             scripts_folder_path_string,
         )?;
@@ -71,6 +71,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let path_buf = path?.path();
         tui.elements_to_choose(
             &index.to_string(),
+            // unwrap is fine here
             &format!("{:?}", path_buf.file_name().unwrap()),
         )?;
         let full_path = format!("{}", path_buf.display());
@@ -99,48 +100,49 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let chosen_script =
         fs::read_to_string(available_scripts.lock().unwrap()[chosen_idx].to_owned());
+
+    let koto = Arc::new(Mutex::new(Koto::default()));
     koto.lock().unwrap().compile(&chosen_script.unwrap())?;
-
-    let available_scripts_copy = available_scripts.lock().unwrap().to_owned();
-    // Highlight choice
-    tui.highlight_and_render(&chosen_idx.to_string(), available_scripts_copy)?;
-
-    let chosen_path_buf = Some(PathBuf::from(
+    koto.lock().unwrap().set_script_path(Some(PathBuf::from(
         available_scripts.lock().unwrap()[chosen_idx].to_owned(),
-    ));
-    let runtime = koto.clone();
-    koto.lock().unwrap().set_script_path(chosen_path_buf);
+    )));
 
-    let chosen_script =
-        fs::read_to_string(available_scripts.lock().unwrap()[chosen_idx].to_owned())?;
-    koto.lock().unwrap().compile(&chosen_script)?;
+    tui.highlight_and_render(
+        &chosen_idx.to_string(),
+        available_scripts.lock().unwrap().to_owned(),
+    )?;
 
-    let mut midi_module = koto_midi::make_module();
+    let mep_in = MidiInput::new("mep_input")?;
+    let mep_out = MidiOutput::new("mep_output")?;
 
-    let mut input_name = String::from("_in");
-    let mut output_name = String::from("_out");
-    let mep_in = MidiInput::new("mep_in")?;
-    let mep_out = MidiOutput::new("mep_out")?;
+    let mut input_port_name = String::from("_in");
+    let mut output_port_name = String::from("_out");
 
-    let mep_in_port_name = match matches.value_of("port") {
+    let mep_input_port_name = match matches.value_of("port") {
         Some(port_name) => {
-            input_name.insert_str(0, port_name);
-            &input_name
+            input_port_name.insert_str(0, port_name);
+            &input_port_name
         }
         None => "mep_in",
     };
 
-    let mep_out_port_name = match matches.value_of("port") {
+    let mep_output_port_name = match matches.value_of("port") {
         Some(port_name) => {
-            output_name.insert_str(0, port_name);
-            &output_name
+            output_port_name.insert_str(0, port_name);
+            &output_port_name
         }
         None => "mep_out",
     };
 
+    let mep_out_port = Arc::new(Mutex::new(
+        mep_out.create_virtual(mep_output_port_name).expect("Couldn't create a virtual output midi port."),
+    ));
+    let runtime = koto.clone();
     let _mep_in_port = mep_in.create_virtual(
-        mep_in_port_name,
+        mep_input_port_name,
         move |_stamp, message, _| {
+            
+            // Make a koto value list from u8 slice.
             let message_value_list = ValueList::default();
             for i in 0..message.len() {
                 message_value_list
@@ -148,6 +150,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .push(Value::Number(ValueNumber::from(message[i])));
             }
 
+            // Assess this.
             let _res: Result<(), RuntimeError> = match runtime.try_lock() {
                 Ok(mut g) => match g.prelude().data().get_with_string("midi") {
                     Some(midi_map) => match midi_map {
@@ -172,23 +175,23 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 runtime_error!("Try defining a function as \"midi.listen\"")
                             }
                         },
-                        // Handle these
-                        _ => unreachable!(),
+                        _ => runtime_error!("\"midi\" has been found but it is not a map. Try importing \"midi\" on top of your script like \"import midi\". And do not use the same name further."),
                     },
-                    // Handle these
-                    _ => unreachable!(),
+                    _ => runtime_error!("Try importing \"midi\" on top of your script like \"import midi\""),
                 },
                 Err(e) => {
                     runtime_error!(format!("{}", e))
                 }
             };
         },
+        // What is this?
         (),
-    )?;
+    ).expect("Couldn't create a virtual input midi port.");
 
-    let mep_out_port = Arc::new(Mutex::new(
-        mep_out.create_virtual(mep_out_port_name).unwrap(),
-    ));
+
+
+    let mut midi_module = koto_midi::make_module();
+    let error_message = "send requires a list of bytes [0 - 255], you may still send malformed messages with this restriction. There will be no problem if you obey the protocol ;)";
     midi_module.add_fn("send", move |vm, args| match vm.get_args(&args) {
         [Value::List(message)] => {
             let msg = message
@@ -197,15 +200,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .map(|v| match v {
                     Value::Number(num) => match num {
                         // Truncate.
-                        ValueNumber::I64(midi_byte) if *midi_byte >= 0 => Ok(*midi_byte as u8),
-                        _ => runtime_error!("send requires a list of positive integers"),
+                        ValueNumber::I64(midi_byte) if *midi_byte >= 0 && *midi_byte < 256 => Ok(*midi_byte as u8),
+                        _ => runtime_error!(error_message),
                     },
                     _ => {
-                        runtime_error!("send requires a list of positive integers")
+                        runtime_error!(error_message)
                     }
                 })
                 .collect::<std::result::Result<Vec<u8>, RuntimeError>>();
-            let _res: Result<(), RuntimeError> =
+            let _res: Result<_, RuntimeError> =
                 match mep_out_port.lock().unwrap().send(&msg.unwrap()[..]) {
                     Ok(_) => Ok(()),
                     Err(e) => {
@@ -214,15 +217,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
             Ok(Value::Empty)
         }
-        _ => runtime_error!("send requires a list of positive integers"),
+        _ => runtime_error!(error_message),
     });
 
     koto.lock().unwrap().prelude().add_map("midi", midi_module);
     koto.lock().unwrap().run()?;
 
-    // Watcher
     let runtime = koto.clone();
     let available_scripts_clone = available_scripts.clone();
+
+    // Script watcher
     std::thread::spawn(move || loop {
         let (tx, rx) = channel();
         let mut watcher = watcher(tx, Duration::from_secs(1)).unwrap();
@@ -234,51 +238,65 @@ fn main() -> Result<(), Box<dyn Error>> {
             .watch(
                 format!("{}", watcher_path.display()),
                 RecursiveMode::Recursive,
-            )
-            .unwrap();
+            ).expect("Watching of \"~/.mep\" folder failed.");
         match rx.recv() {
             Ok(event) => match event {
-                DebouncedEvent::Write(path) if path.extension().unwrap() == "koto" => {
-                    let chosen_script = fs::read_to_string(
-                        available_scripts_clone.lock().unwrap()[chosen_idx].to_owned(),
-                    );
-                    let chunk = runtime.lock().unwrap().compile(&chosen_script.unwrap());
-                    runtime.lock().unwrap().run_chunk(chunk.unwrap()).unwrap();
-                }
+                DebouncedEvent::Write(path) => match path.extension() {
+                        Some(extension) => {
+                          if "koto" == &format!("{:?}",extension)[..] {
+                            let chosen_script = fs::read_to_string(
+                            available_scripts_clone.lock().unwrap()[chosen_idx].to_owned(),
+                            ).expect("Couldn't read chosen script.");
+                            // Handle this unwrap?
+                            let chunk = runtime.lock().unwrap().compile(&chosen_script).unwrap();
+                            // Handle this unwrap?
+                            runtime.lock().unwrap().run_chunk(chunk).unwrap();
+                          }
+                          else {
+                              // Error wrong extension
+                          }
+                        },
+                        None => {
+                            // Error no extension
+                        } 
+                    },
+                
                 _ => {
+                    // For debugging.
                     // println!("{:?}", event);
                 }
             },
-            Err(e) => println!("watch error: {:?}", e),
+            Err(e) => println!("{:?}", e),
         }
     });
 
-    // We can then always loop here for other choices of processors.
-
+    // We loop here for other choices of processors.
     loop {
+        
         let mut choice = String::new();
         stdin().read_line(&mut choice)?;
         let chosen_idx: usize = choice.trim().parse()?;
-        // Here check if index is out of bounds.
+        
+        // If index is out of bounds.
         if chosen_idx > available_scripts.lock().unwrap().len() - 1 {
             tui.ignore_choice(chosen_idx)?;
             continue;
         }
+        
         let chosen_script =
-            fs::read_to_string(available_scripts.lock().unwrap()[chosen_idx].to_owned());
-        let chunk = koto.lock().unwrap().compile(&chosen_script.unwrap());
-        koto.lock().unwrap().run_chunk(chunk.unwrap()).unwrap();
-
-        let available_scripts = available_scripts.lock().unwrap().to_owned();
+            fs::read_to_string(available_scripts.lock().unwrap()[chosen_idx].to_owned()).expect("Couldn't read chosen script.");
+        // Handle this unwrap?
+        let chunk = koto.lock().unwrap().compile(&chosen_script).unwrap();
+        // Handle this unwrap?
+        koto.lock().unwrap().run_chunk(chunk).unwrap();
         // Highlight choice
-        tui.highlight_and_render(&chosen_idx.to_string(), available_scripts)?;
+        tui.highlight_and_render(&chosen_idx.to_string(), available_scripts.lock().unwrap().to_owned())?;
     }
-
-    // unreachable
 }
 
+// Borrowed from,
 // https://stackoverflow.com/questions/26958489/how-to-copy-a-folder-recursively-in-rust
-pub fn copy<U: AsRef<Path>, V: AsRef<Path>>(from: U, to: V) -> Result<(), Box<dyn Error>> {
+pub fn copy_directory_contents<U: AsRef<Path>, V: AsRef<Path>>(from: U, to: V) -> Result<(), Box<dyn Error>> {
     let mut stack = Vec::new();
     stack.push(PathBuf::from(from.as_ref()));
 
