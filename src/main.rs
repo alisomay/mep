@@ -146,7 +146,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     ));
     
     let shared_koto_runtime_clone = shared_koto_runtime.clone();
-    let _mep_in_port = mep_in.create_virtual(
+    
+    mep_in.create_virtual(
         mep_input_port_name,
         move |_stamp, message, _| {
             
@@ -192,7 +193,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 
     let mut midi_module = koto_midi::make_module();
-    let error_message = "send requires a list of bytes [0 - 255], you may still send malformed messages with this restriction. There will be no problem if you obey the protocol ;)";
+    let send_error_message = "send requires a list of bytes [0 - 255], you may still send malformed messages with this restriction. There will be no problem if you obey the protocol ;)";
     midi_module.add_fn("send", move |vm, args| match vm.get_args(&args) {
         [Value::List(message)] => {
             let msg = message
@@ -201,10 +202,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .map(|value| match value {
                     Value::Number(num) => match num {
                         ValueNumber::I64(byte) if *byte >= 0 && *byte < 256 => Ok(*byte as u8),
-                        _ => runtime_error!(error_message),
+                        _ => runtime_error!(send_error_message),
                     },
                     _ => {
-                        runtime_error!(error_message)
+                        runtime_error!(send_error_message)
                     }
                 })
                 .collect::<std::result::Result<Vec<u8>, RuntimeError>>();
@@ -217,7 +218,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
             Ok(Value::Empty)
         }
-        _ => runtime_error!(error_message),
+        _ => runtime_error!(send_error_message),
     });
 
     runtime.prelude().add_map("midi", midi_module);

@@ -1,0 +1,11 @@
+import midi
+import random
+
+midi.listen = |message| 
+  message = midi.parse message
+  match message.type
+    midi.types.note_on if message.velocity > 0 then
+      processed_msg = midi.message.note_on [message.note, (random.number() * 127).floor() + 1, message.channel]
+      midi.send processed_msg.pack()
+
+
