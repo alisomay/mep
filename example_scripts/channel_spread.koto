@@ -1,5 +1,10 @@
+# An event processor script to route every distinct note in an octave 
+# to its own channel in an orderly manner. 
+# Every "C" is channel 0 (1), "C#" is channel 1 (2), and so on..
+
 import midi
 
+# Keep track of the "note_on" messages received.
 history = []
 for i in 0..127
   history.push(())
@@ -12,6 +17,7 @@ midi.listen = |message|
       history[message.note] = processed_msg
       midi.send processed_msg.pack()
     midi.types.note_on if message.velocity == 0 then
+      # Route "note_off messages to their right channels by querying the kept history"
       note_off = midi.message.note_on [history[message.note].note,0,history[message.note].channel]
       midi.send note_off.pack()
 
