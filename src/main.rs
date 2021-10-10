@@ -35,6 +35,7 @@ macro_rules! lock {
 fn main() -> Result<(), Box<dyn Error>> {
     // Handle unwrap
     let home = home_dir().unwrap();
+    let tui = Tui::new();
 
     let matches = App::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
@@ -48,16 +49,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         )
         .get_matches();
 
-    let tui = Tui::new();
-
     let mut scripts_folder_path = PathBuf::new();
     scripts_folder_path.push(home.to_owned());
     scripts_folder_path.push(SCRIPTS_FOLDER_NAME);
-    let scripts_folder_path_string = &format!("{}", scripts_folder_path.display())[..];
+    let scripts_folder_path_str = &format!("{}", scripts_folder_path.display())[..];
 
-    if !Path::new(scripts_folder_path_string).exists() {
+    if !Path::new(scripts_folder_path_str).exists() {
         tui.scripts_folder_not_found()?;
-        fs::create_dir(scripts_folder_path_string)?;
+        fs::create_dir(scripts_folder_path_str)?;
 
         let mut examples_path = PathBuf::new();
         examples_path.push(env!("CARGO_MANIFEST_DIR"));
@@ -65,7 +64,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         copy_directory_contents(
             &format!("{}", examples_path.display()),
-            scripts_folder_path_string,
+            scripts_folder_path_str,
         )?;
     }
 
@@ -153,24 +152,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         mep_input_port_name,
         move |_stamp, message, _| {
             
-            // Make a koto value list from u8 slice.
-            let message_value_list = ValueList::default();
-            for i in 0..message.len() {
-                message_value_list
-                    .data_mut()
-                    .push(Value::Number(ValueNumber::from(message[i])));
-            }
-
-            // Assess this.
             let _res: Result<(), RuntimeError> = match shared_koto_runtime_clone.try_lock() {
                 Ok(mut runtime) => match runtime.prelude().data().get_with_string("midi") {
-                    Some(midi_map) => match midi_map {
-                        Value::Map(map) => match map.data().get_with_string("listen") {
-                            Some(listener) => match listener {
+                    Some(midi_module) => match midi_module {
+                        Value::Map(midi_module) => match midi_module.data().get_with_string("listen") {
+                            Some(message_listener) => match message_listener {
                                 Value::Function(_) => {
+                                    // Make a list of koto values from u8 slice.
+                                    let message_values = message.iter().map(|byte| Value::Number(ValueNumber::from(byte))).collect::<Vec<Value>>();
+                                    // Call "midi.listen" function in script with the midi message.
                                     match runtime.call_function(
-                                        listener.clone(),
-                                        &[Value::List(message_value_list)],
+                                        message_listener.to_owned(),
+                                        &[Value::List(ValueList::from_slice(&message_values))],
                                     ) {
                                         Ok(_) => Ok(()),
                                         Err(e) => {
@@ -200,7 +193,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     ).expect("Couldn't create a virtual input midi port.");
 
 
-
     let mut midi_module = koto_midi::make_module();
     let error_message = "send requires a list of bytes [0 - 255], you may still send malformed messages with this restriction. There will be no problem if you obey the protocol ;)";
     midi_module.add_fn("send", move |vm, args| match vm.get_args(&args) {
@@ -208,10 +200,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             let msg = message
                 .data()
                 .iter()
-                .map(|v| match v {
+                .map(|value| match value {
                     Value::Number(num) => match num {
-                        // Truncate.
-                        ValueNumber::I64(midi_byte) if *midi_byte >= 0 && *midi_byte < 256 => Ok(*midi_byte as u8),
+                        ValueNumber::I64(byte) if *byte >= 0 && *byte < 256 => Ok(*byte as u8),
                         _ => runtime_error!(error_message),
                     },
                     _ => {
@@ -239,8 +230,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Script watcher
     std::thread::spawn(move || loop {
-        let (tx, rx) = channel();
-        let mut watcher = watcher(tx, Duration::from_secs(1)).unwrap();
+        let (sender, receiver) = channel();
+        let mut watcher = watcher(sender, Duration::from_secs(1)).unwrap();
 
         let mut watcher_path = home.to_owned();
         watcher_path.push(SCRIPTS_FOLDER_NAME);
@@ -250,7 +241,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 format!("{}", watcher_path.display()),
                 RecursiveMode::Recursive,
             ).expect("Watching of \"~/.mep\" folder failed.");
-        match rx.recv() {
+        match receiver.recv() {
             Ok(event) => match event {
                 DebouncedEvent::Write(path) => match path.extension() {
                         Some(extension) => {
