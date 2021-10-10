@@ -58,3 +58,8 @@ Building `mep` is as simple as running `cargo build` if you have `rust` in your 
 `mep` also exposes `random` library from koto.
 You may visit [koto main repository](https://github.com/koto-lang/koto) to understand how to use it.
 You may bring it in scope by writing `import random` in koto scripts.
+
+## Last words
+
+Currently `mep` is in early development stage and not stable.
+A release will be made when required stability is achieved.
