@@ -6,7 +6,10 @@ use std::{
     io::stdin,
     path::{Path, PathBuf},
     sync::mpsc::channel,
-    sync::{mpsc::Receiver, Arc, Mutex},
+    sync::{
+        mpsc::{Receiver, TryRecvError},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 use tui::*;
@@ -62,10 +65,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (to_tui, from_main) = channel::<MainToTuiMessage>();
     let tui_clone = tui.clone();
 
+    // Thread for tui
     std::thread::spawn(move || loop {
         use MainToTuiMessage::*;
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        match from_main.try_recv() {
+        // std::thread::sleep(std::time::Duration::from_millis(10));
+        match from_main.recv() {
             Ok(message) => match message {
                 Intro => {
                     lock!(tui_clone).intro().unwrap();
@@ -100,6 +104,52 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
+    // Thread for script watcher
+    let (to_main, from_watcher) = channel::<WatcherToMainMessage>();
+    std::thread::spawn(move || loop {
+        let (sender, receiver) = channel();
+        let mut watcher = watcher(sender, Duration::from_secs(1)).unwrap();
+
+        let mut watcher_path = home.clone();
+        watcher_path.push(SCRIPTS_FOLDER_NAME);
+
+        watcher
+            .watch(
+                format!("{}", watcher_path.display()),
+                RecursiveMode::Recursive,
+            )
+            .expect("Watch of \"~/.mep\" folder failed.");
+        match receiver.recv() {
+            Ok(event) => match event {
+                DebouncedEvent::Write(path) | DebouncedEvent::NoticeWrite(path) => {
+                    match path.extension() {
+                        Some(extension) => match extension.to_str() {
+                            Some(extension) if "koto" == extension => {
+                                to_main.send(WatcherToMainMessage::Change(path)).unwrap();
+                            }
+                            Some(_) => {
+                                dbg!("Wrong ext?");
+                            }
+                            None => {
+                                dbg!("Problem converting osstr to str");
+                                // Error wrong extension
+                            }
+                        },
+                        None => {
+                            dbg!("No ext?");
+                            // Error no extension
+                        }
+                    }
+                }
+                _ => {
+                    // For debugging.
+                    println!("{:?}", event);
+                }
+            },
+            Err(e) => println!("{:?}", e),
+        }
+    });
+
     let matches = App::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
         .arg(
@@ -108,14 +158,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .short("p")
                 .long("port")
                 .value_name("name")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("debug")
-                .help("You may give a name to your midi io port")
-                .short("d")
-                .long("debug")
-                .value_name("debug")
                 .takes_value(true),
         )
         .arg(
@@ -165,14 +207,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let script_paths = fs::read_dir(scripts_folder_path)?;
-
+    to_tui.send(MainToTuiMessage::Clear)?;
     to_tui.send(MainToTuiMessage::Intro)?;
-
     let shared_available_scripts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
     let mut available_scripts = lock!(shared_available_scripts);
 
     for (index, path) in script_paths.enumerate() {
         let path_buf = path?.path();
+
         to_tui.send(MainToTuiMessage::ListScripts(
             index.to_string(),
             format!("{:?}", path_buf.file_name().unwrap()),
@@ -186,6 +228,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::process::exit(0x0);
     }
 
+    // --
     let mut choice = String::new();
     let mut chosen_idx: usize;
     let max_idx = available_scripts.len() - 1;
@@ -206,22 +249,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             to_tui.send(MainToTuiMessage::IgnoreChoice)?;
             continue;
         }
+
         break;
     }
 
     let chosen_script =
         fs::read_to_string(&available_scripts[chosen_idx]).expect("Couldn't read chosen script.");
+    let chosen_script_path = available_scripts[chosen_idx].clone();
     let shared_koto_runtime = Arc::new(Mutex::new(Koto::default()));
     let shared_koto_runtime_clone = shared_koto_runtime.clone();
     let mut runtime = lock!(shared_koto_runtime_clone);
-
-    runtime.compile(&chosen_script)?;
     runtime.set_script_path(Some(PathBuf::from(&available_scripts[chosen_idx])));
-
-    to_tui.send(MainToTuiMessage::HighlightAndRender(
-        chosen_idx.to_string(),
-        (*available_scripts).clone(),
-    ))?;
 
     let mep_in = MidiInput::new("mep_input")?;
     let mep_out = MidiOutput::new("mep_output")?;
@@ -250,6 +288,54 @@ fn main() -> Result<(), Box<dyn Error>> {
             .create_virtual(mep_output_port_name)
             .expect("Couldn't create a virtual output midi port."),
     ));
+
+    let mut midi_module = koto_midi::make_module();
+    let send_error_message = "send requires a list of bytes [0 - 255], you may still send malformed messages with this restriction. There will be no problem if you obey the protocol ;)";
+    midi_module.add_fn("send", move |vm, args| match vm.get_args(args) {
+        [Value::List(message)] => {
+            let msg = message
+                .data()
+                .iter()
+                .map(|value| match value {
+                    Value::Number(num) => match num {
+                        ValueNumber::I64(byte) if *byte >= 0 && *byte < 256 => Ok(*byte as u8),
+                        _ => runtime_error!(send_error_message),
+                    },
+                    _ => {
+                        runtime_error!(send_error_message)
+                    }
+                })
+                .collect::<std::result::Result<Vec<u8>, RuntimeError>>();
+            let _res: Result<_, RuntimeError> =
+                match lock!(shared_mep_out_port).send(&msg.unwrap()[..]) {
+                    Ok(_) => Ok(()),
+                    Err(e) => {
+                        runtime_error!(format!("{}", e))
+                    }
+                };
+            Ok(Value::Empty)
+        }
+        _ => runtime_error!(send_error_message),
+    });
+
+    let mut prelude = runtime.prelude();
+    prelude.add_map("midi", midi_module);
+    prelude.add_value("random", koto_random::make_module());
+
+    try_compile(
+        &to_tui,
+        &from_watcher,
+        chosen_script,
+        chosen_script_path,
+        &mut runtime,
+    )?;
+
+    to_tui.send(MainToTuiMessage::HighlightAndRender(
+        chosen_idx.to_string(),
+        (*available_scripts).clone(),
+    ))?;
+
+    // ---
 
     mep_in.create_virtual(
             mep_input_port_name,
@@ -294,121 +380,93 @@ fn main() -> Result<(), Box<dyn Error>> {
             (),
         ).expect("Couldn't create a virtual input midi port.");
 
-    let mut midi_module = koto_midi::make_module();
-    let send_error_message = "send requires a list of bytes [0 - 255], you may still send malformed messages with this restriction. There will be no problem if you obey the protocol ;)";
-    midi_module.add_fn("send", move |vm, args| match vm.get_args(args) {
-        [Value::List(message)] => {
-            let msg = message
-                .data()
-                .iter()
-                .map(|value| match value {
-                    Value::Number(num) => match num {
-                        ValueNumber::I64(byte) if *byte >= 0 && *byte < 256 => Ok(*byte as u8),
-                        _ => runtime_error!(send_error_message),
-                    },
-                    _ => {
-                        runtime_error!(send_error_message)
-                    }
-                })
-                .collect::<std::result::Result<Vec<u8>, RuntimeError>>();
-            let _res: Result<_, RuntimeError> =
-                match lock!(shared_mep_out_port).send(&msg.unwrap()[..]) {
-                    Ok(_) => Ok(()),
-                    Err(e) => {
-                        runtime_error!(format!("{}", e))
+    runtime.run()?;
+    fn spawn_stdin_channel() -> Receiver<String> {
+        let (stdin_to_main, from_stdin) = channel::<String>();
+        std::thread::spawn(move || loop {
+            let mut choice = String::new();
+            stdin().read_line(&mut choice).unwrap();
+            stdin_to_main.send(choice).unwrap();
+        });
+        from_stdin
+    }
+    // We loop here for other choices of scripts.
+    let stdin_channel = spawn_stdin_channel();
+    loop {
+        match stdin_channel.try_recv() {
+            Ok(mut choice) => {
+                chosen_idx = match choice.clone().trim().parse() {
+                    Ok(idx) => idx,
+                    Err(_) => {
+                        choice.clear();
+                        to_tui.send(MainToTuiMessage::IgnoreChoice)?;
+                        continue;
                     }
                 };
-            Ok(Value::Empty)
-        }
-        _ => runtime_error!(send_error_message),
-    });
-    let mut prelude = runtime.prelude();
-    prelude.add_map("midi", midi_module);
-    prelude.add_value("random", koto_random::make_module());
-    runtime.run()?;
 
-    // Script watcher
-    let (to_main, from_watcher) = channel::<WatcherToMainMessage>();
-    std::thread::spawn(move || loop {
-        let (sender, receiver) = channel();
-        let mut watcher = watcher(sender, Duration::from_secs(1)).unwrap();
+                // Here check if index is out of bounds.
+                if chosen_idx > max_idx {
+                    choice.clear();
+                    to_tui.send(MainToTuiMessage::IgnoreChoice)?;
+                    continue;
+                }
 
-        let mut watcher_path = home.clone();
-        watcher_path.push(SCRIPTS_FOLDER_NAME);
+                let chosen_script_path = available_scripts[chosen_idx].clone();
+                let chosen_script =
+                    fs::read_to_string(&chosen_script_path).expect("Couldn't read chosen script.");
 
-        watcher
-            .watch(
-                format!("{}", watcher_path.display()),
-                RecursiveMode::Recursive,
-            )
-            .expect("Watch of \"~/.mep\" folder failed.");
-        match receiver.recv() {
-            Ok(event) => match event {
-                DebouncedEvent::Write(path) | DebouncedEvent::NoticeWrite(path) => {
-                    match path.extension() {
-                        Some(extension) => match extension.to_str() {
-                            Some(extension) if "koto" == extension => {
-                                to_main.send(WatcherToMainMessage::Change(path)).unwrap();
+                try_compile(
+                    &to_tui,
+                    &from_watcher,
+                    chosen_script,
+                    chosen_script_path.clone(),
+                    &mut runtime,
+                )?;
+
+                // Highlight choice
+                to_tui.send(MainToTuiMessage::HighlightAndRender(
+                    chosen_idx.to_string(),
+                    (*available_scripts).clone(),
+                ))?;
+            }
+            Err(TryRecvError::Empty) => match from_watcher.try_recv() {
+                Ok(message) => {
+                    #[allow(irrefutable_let_patterns)]
+                    if let WatcherToMainMessage::Change(path) = message {
+                        loop {
+                            let chosen_script_path = path.to_str().unwrap().to_string();
+                            let chosen_script = fs::read_to_string(&chosen_script_path)
+                                .expect("Couldn't read chosen script.");
+                            match try_compile(
+                                &to_tui,
+                                &from_watcher,
+                                chosen_script,
+                                chosen_script_path,
+                                &mut runtime,
+                            ) {
+                                Ok(_) => {
+                                    // Script fixed.
+                                    // Highlight choice
+                                    to_tui.send(MainToTuiMessage::HighlightAndRender(
+                                        chosen_idx.to_string(),
+                                        (*available_scripts).clone(),
+                                    ))?;
+                                    break;
+                                }
+                                Err(_) => {
+                                    // Didn't work out try one more time.
+                                    continue;
+                                }
                             }
-                            Some(_) => {
-                                dbg!("Wrong ext?");
-                            }
-                            None => {
-                                dbg!("Problem converting osstr to str");
-                                // Error wrong extension
-                            }
-                        },
-                        None => {
-                            dbg!("No ext?");
-                            // Error no extension
                         }
                     }
                 }
-                _ => {
-                    // For debugging.
-                    println!("{:?}", event);
+                Err(_e) => {
+                    continue;
                 }
             },
-            Err(e) => println!("{:?}", e),
+            Err(TryRecvError::Disconnected) => panic!("Channel disconnected"),
         }
-    });
-
-    // We loop here for other choices of scripts.
-    loop {
-        let mut choice = String::new();
-        stdin().read_line(&mut choice)?;
-        chosen_idx = match choice.trim().parse() {
-            Ok(idx) => idx,
-            Err(_) => {
-                choice.clear();
-                to_tui.send(MainToTuiMessage::IgnoreChoice)?;
-                continue;
-            }
-        };
-
-        // Here check if index is out of bounds.
-        if chosen_idx > max_idx {
-            choice.clear();
-            to_tui.send(MainToTuiMessage::IgnoreChoice)?;
-            continue;
-        }
-        let chosen_script_path = available_scripts[chosen_idx].clone();
-        let chosen_script =
-            fs::read_to_string(&chosen_script_path).expect("Couldn't read chosen script.");
-
-        try_compile(
-            &to_tui,
-            &from_watcher,
-            chosen_script,
-            chosen_script_path.clone(),
-            &mut runtime,
-        )?;
-
-        // Highlight choice
-        to_tui.send(MainToTuiMessage::HighlightAndRender(
-            chosen_idx.to_string(),
-            (*available_scripts).clone(),
-        ))?;
     }
 }
 
@@ -429,11 +487,10 @@ fn try_compile(
                     format!("{:?}", e),
                 ))?;
                 loop {
-                    match from_watcher.try_recv() {
+                    match from_watcher.recv() {
                         Ok(message) => {
                             #[allow(irrefutable_let_patterns)]
                             if let WatcherToMainMessage::Change(path) = message {
-                                dbg!("CHANGE RECEIVED");
                                 let chosen_script_path = path.to_str().unwrap().to_string();
                                 let chosen_script = fs::read_to_string(&chosen_script_path)
                                     .expect("Couldn't read chosen script.");
@@ -445,10 +502,11 @@ fn try_compile(
                                     runtime,
                                 ) {
                                     Ok(_) => {
-                                        //Compiled
+                                        // Script fixed.
                                         return Ok(());
                                     }
                                     Err(_) => {
+                                        // Didn't work out try one more time.
                                         continue;
                                     }
                                 }
@@ -460,17 +518,17 @@ fn try_compile(
             }
         },
         Err(e) => {
+            // Compile time error.
             to_tui.send(MainToTuiMessage::Clear)?;
             to_tui.send(MainToTuiMessage::ErrorInScript(
                 chosen_script_path,
                 format!("{:?}", e),
             ))?;
             loop {
-                match from_watcher.try_recv() {
+                match from_watcher.recv() {
                     Ok(message) => {
                         #[allow(irrefutable_let_patterns)]
                         if let WatcherToMainMessage::Change(path) = message {
-                            dbg!("CHANGE RECEIVED");
                             let chosen_script_path = path.to_str().unwrap().to_string();
                             let chosen_script = fs::read_to_string(&chosen_script_path)
                                 .expect("Couldn't read chosen script.");
@@ -482,10 +540,11 @@ fn try_compile(
                                 runtime,
                             ) {
                                 Ok(_) => {
-                                    //Compiled
+                                    // Script fixed.
                                     return Ok(());
                                 }
                                 Err(_) => {
+                                    // Didn't work out try one more time.
                                     continue;
                                 }
                             }

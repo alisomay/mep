@@ -103,10 +103,9 @@ impl Tui {
         available_scripts: &[String],
     ) -> Result<(), Box<dyn Error>> {
         let index_as_number: usize = index.parse().unwrap();
-
         // self.stdout.clear_last_lines(available_scripts.len() + 1)?;
         self.clear()?;
-
+        self.intro()?;
         for (i, element) in available_scripts.iter().enumerate() {
             if i == index_as_number {
                 self.write_line(i.to_string().as_str().green())?;
