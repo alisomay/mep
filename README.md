@@ -58,14 +58,23 @@ Look for info in the [koto main repository](https://github.com/koto-lang/koto) t
 
 - _How may do I debug my scripts?_
 
-  Currently errors in your scripts would cause **mep** to panic.
-  This behavior will be replaced soon with ignoring errors.
-  **mep** will let you know which script caused the error.
-  Then it will suggest you to run it with the upcoming `--debug <script_name>` option to supply you an ergonomic environment for debugging koto scripts.
+  Errors in your scripts would navigate you to a new screen and show you the koto error.
+  **mep** will let you know which script caused the error and wait for changes.
+  After you fixed your erroring script in "~/.mep" folder, it will move to the screen where you can choose your scripts again.
 
 ## Building
 
-Building **mep** is as simple as running `cargo build` if you have **rust** in your system installed.
+Building **mep** is as simple as running `cargo build` or `cargo build --release` if you have **rust** in your system installed.
+
+**mep** uses the nightly channel or rust.
+
+## Running
+
+To run **mep** after building you may run `cargo run` if you have **rust** in your system installed.
+You may add command line options by running `cargo run -- <your-command-line-options>`.
+To see the list of available command line options you may run `cargo run -- --help`.
+
+Alternatively if you run `cargo build` and then navigate to `<repository-root>/target/debug` you may find the `mep` binary and run it or if you run `cargo build --release` then the binary will be in `<repository-root>/target/release`.
 
 ## Extra
 
