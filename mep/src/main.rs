@@ -100,8 +100,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Start the listener for terminal ui (tui)
     std::thread::spawn(move || loop {
         use MainToTuiMessage::*;
-        match from_main.recv() {
-            Ok(message) => match message {
+        if let Ok(message) = from_main.recv() {
+            match message {
                 // Greetings
                 Intro => {
                     lock!(tui_clone)
@@ -145,9 +145,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                         .expect("Failed to write to stdout.");
                     eprintln!("{}", err);
                 }
-            },
-            Err(_e) => {
-                // TODO: Anything to cover here?
             }
         }
     });
@@ -264,27 +261,25 @@ fn main() -> Result<(), Box<dyn Error>> {
             )
             .expect("Watch of \"~/.mep\" folder failed.");
 
-        // Blocks until receives
-        match receiver.recv() {
-            Ok(event) => match event {
+        if let Ok(event) = receiver.recv() {
+            match event {
                 DebouncedEvent::Write(path) | DebouncedEvent::NoticeWrite(path) => {
                     if let Some(extension) = path.extension() {
                         match extension.to_str() {
                             Some(extension) if "koto" == extension => {
-                                match to_main.send(WatcherToMainMessage::Change(path)) {
-                                    Ok(_) => {}
-                                    Err(e) => {
-                                        eprintln!("{:?}", e);
-                                    }
-                                }
+                                // It is safe to unwrap here in my opinion because the receiver is the main thread.
+                                to_main.send(WatcherToMainMessage::Change(path)).unwrap();
                             }
-                            _ => {}
+                            _ => {
+                                // Ignore files other than koto scripts
+                            }
                         }
                     }
                 }
-                _ => {}
-            },
-            Err(err) => println!("{:?}", err),
+                _ => {
+                    // Ignore other events
+                }
+            }
         }
     });
 
@@ -377,11 +372,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 })
                 .collect::<std::result::Result<Vec<u8>, RuntimeError>>();
             let _result: Result<_, RuntimeError> =
-                // This will always succeed.
+                // `&msg.unwrap()` will always succeed.
                 match lock!(shared_mep_out_port).send(&msg.unwrap()[..]) {
                     Ok(_) => Ok(()),
                     Err(e) => {
-                        runtime_error!(format!("{}", e))
+                        runtime_error!(format!("Error when trying to send midi message: {}", e))
                     }
                 };
             Ok(Value::Empty)
@@ -511,47 +506,39 @@ fn main() -> Result<(), Box<dyn Error>> {
                     (*available_scripts).clone(),
                 ))?;
             }
-            Err(TryRecvError::Empty) => match from_watcher.try_recv() {
-                // After checking for user input, check if a script is changed.
-                Ok(message) => {
-                    #[allow(irrefutable_let_patterns)]
-                    if let WatcherToMainMessage::Change(path) = message {
-                        loop {
-                            let chosen_script_path = path
-                                .to_str()
-                                .expect("Tried to convert invalid unicode string.")
-                                .to_string();
-                            let chosen_script = fs::read_to_string(&chosen_script_path)
-                                .expect("Couldn't read chosen script.");
-                            match try_compile(
-                                &to_tui,
-                                &from_watcher,
-                                chosen_script,
-                                chosen_script_path,
-                                &mut runtime,
-                            ) {
-                                Ok(_) => {
-                                    // Script fixed or there was no problem.
-                                    // Re-render
-                                    to_tui.send(MainToTuiMessage::HighlightAndRender(
-                                        chosen_idx.to_string(),
-                                        (*available_scripts).clone(),
-                                    ))?;
-                                    break;
-                                }
-                                Err(_) => {
-                                    // Script still has errors. Try one more time.
-                                    continue;
-                                }
+            Err(TryRecvError::Empty) => {
+                if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
+                    loop {
+                        let chosen_script_path = path
+                            .to_str()
+                            .expect("Tried to convert invalid unicode string.")
+                            .to_string();
+                        let chosen_script = fs::read_to_string(&chosen_script_path)
+                            .expect("Couldn't read chosen script.");
+                        match try_compile(
+                            &to_tui,
+                            &from_watcher,
+                            chosen_script,
+                            chosen_script_path,
+                            &mut runtime,
+                        ) {
+                            Ok(_) => {
+                                // Script fixed or there was no problem.
+                                // Re-render
+                                to_tui.send(MainToTuiMessage::HighlightAndRender(
+                                    chosen_idx.to_string(),
+                                    (*available_scripts).clone(),
+                                ))?;
+                                break;
+                            }
+                            Err(_) => {
+                                // Script still has errors. Try one more time.
+                                continue;
                             }
                         }
                     }
                 }
-                Err(_) => {
-                    // TODO: Anything to cover here?
-                    continue;
-                }
-            },
+            }
             Err(TryRecvError::Disconnected) => panic!("Channel disconnected"),
         }
     }
@@ -575,37 +562,29 @@ fn try_compile(
                     format!("{:?}", e),
                 ))?;
                 loop {
-                    match from_watcher.recv() {
-                        Ok(message) => {
-                            #[allow(irrefutable_let_patterns)]
-                            if let WatcherToMainMessage::Change(path) = message {
-                                // A fix attempt had been made.
-                                let chosen_script_path = path
-                                    .to_str()
-                                    .expect("Tried to convert invalid unicode string.")
-                                    .to_string();
-                                let chosen_script = fs::read_to_string(&chosen_script_path)
-                                    .expect("Couldn't read chosen script.");
-                                match try_compile(
-                                    to_tui,
-                                    from_watcher,
-                                    chosen_script,
-                                    chosen_script_path,
-                                    runtime,
-                                ) {
-                                    Ok(_) => {
-                                        // Script is fixed.
-                                        return Ok(());
-                                    }
-                                    Err(_) => {
-                                        // Didn't work out try one more time.
-                                        continue;
-                                    }
-                                }
+                    if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
+                        // A fix attempt had been made.
+                        let chosen_script_path = path
+                            .to_str()
+                            .expect("Tried to convert invalid unicode string.")
+                            .to_string();
+                        let chosen_script = fs::read_to_string(&chosen_script_path)
+                            .expect("Couldn't read chosen script.");
+                        match try_compile(
+                            to_tui,
+                            from_watcher,
+                            chosen_script,
+                            chosen_script_path,
+                            runtime,
+                        ) {
+                            Ok(_) => {
+                                // Script is fixed.
+                                return Ok(());
                             }
-                        }
-                        Err(_e) => {
-                            // TODO: Anything to cover here?
+                            Err(_) => {
+                                // Didn't work out try one more time.
+                                continue;
+                            }
                         }
                     }
                 }
@@ -619,37 +598,29 @@ fn try_compile(
                 format!("{:?}", e),
             ))?;
             loop {
-                match from_watcher.recv() {
-                    Ok(message) => {
-                        #[allow(irrefutable_let_patterns)]
-                        if let WatcherToMainMessage::Change(path) = message {
-                            // A fix attempt had been made.
-                            let chosen_script_path = path
-                                .to_str()
-                                .expect("Tried to convert invalid unicode string.")
-                                .to_string();
-                            let chosen_script = fs::read_to_string(&chosen_script_path)
-                                .expect("Couldn't read chosen script.");
-                            match try_compile(
-                                to_tui,
-                                from_watcher,
-                                chosen_script,
-                                chosen_script_path,
-                                runtime,
-                            ) {
-                                Ok(_) => {
-                                    // Script is fixed.
-                                    return Ok(());
-                                }
-                                Err(_) => {
-                                    // Didn't work out try one more time.
-                                    continue;
-                                }
-                            }
+                if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
+                    // A fix attempt had been made.
+                    let chosen_script_path = path
+                        .to_str()
+                        .expect("Tried to convert invalid unicode string.")
+                        .to_string();
+                    let chosen_script = fs::read_to_string(&chosen_script_path)
+                        .expect("Couldn't read chosen script.");
+                    match try_compile(
+                        to_tui,
+                        from_watcher,
+                        chosen_script,
+                        chosen_script_path,
+                        runtime,
+                    ) {
+                        Ok(_) => {
+                            // Script is fixed.
+                            return Ok(());
                         }
-                    }
-                    Err(_e) => {
-                        // TODO: Anything to cover here?
+                        Err(_) => {
+                            // Didn't work out try one more time.
+                            continue;
+                        }
                     }
                 }
             }
