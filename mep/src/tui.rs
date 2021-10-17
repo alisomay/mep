@@ -3,7 +3,7 @@ use std::{error::Error, path::PathBuf};
 use console::Term;
 use crossterm::style::*;
 
-const MSG: &'static str = "choose and then press \"enter\":";
+const MSG: &str = "choose and then press \"enter\":";
 
 pub struct Tui {
     stdout: Term,
@@ -21,6 +21,10 @@ impl Tui {
         Ok(())
     }
 
+    pub fn clear(&self) -> Result<(), Box<dyn Error>> {
+        self.stdout.clear_screen()?;
+        Ok(())
+    }
     fn write_line(&self, line: StyledContent<&str>) -> Result<(), Box<dyn Error>> {
         self.stdout.write_line(&format!("{}", line))?;
         Ok(())
@@ -36,6 +40,28 @@ impl Tui {
             "💡 There are no event processor scripts found in \"~/.mep\". Maybe put a couple?"
                 .blue(),
         )?;
+        Ok(())
+    }
+    pub fn show_error(&self, err: &str) -> Result<(), Box<dyn Error>> {
+        self.clear_lines(1)?;
+        self.write_line(format!("💡 There is an error in: {}", err)[..].magenta())?;
+        self.write_line(
+            "Either choose another one by entering a valid digit or fix your script.".blue(),
+        )?;
+        Ok(())
+    }
+
+    pub fn removed_scripts_folder(&self) -> Result<(), Box<dyn Error>> {
+        self.clear_lines(1)?;
+        self.write_line(
+            "💡 \"~/.mep\" folder is removed. Re-run \"mep\" to auto create it and fill it with example scripts."
+                .red(),
+        )?;
+        Ok(())
+    }
+    pub fn reset_scripts_folder(&self) -> Result<(), Box<dyn Error>> {
+        self.clear_lines(1)?;
+        self.write_line("💡 \"~/.mep\" folder is reset with example scripts.".red())?;
         Ok(())
     }
 
@@ -78,13 +104,14 @@ impl Tui {
     ) -> Result<(), Box<dyn Error>> {
         let index_as_number: usize = index.parse().unwrap();
 
-        self.stdout.clear_last_lines(available_scripts.len() + 1)?;
+        // self.stdout.clear_last_lines(available_scripts.len() + 1)?;
+        self.clear()?;
 
         for (i, element) in available_scripts.iter().enumerate() {
             if i == index_as_number {
-                self.write_line(format!("{}", i.to_string())[..].green())?;
+                self.write_line(i.to_string().as_str().green())?;
             } else {
-                self.write_line(format!("{}", i.to_string())[..].yellow())?;
+                self.write_line(i.to_string().as_str().yellow())?;
             }
             self.stdout.move_cursor_up(1)?;
             self.stdout.move_cursor_right(3)?;
