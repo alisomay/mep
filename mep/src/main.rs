@@ -56,12 +56,38 @@ enum WatcherToMainMessage {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Handle unwrap
-    let home = home_dir().unwrap();
-    let scripts_folder_path = get_scripts_folder_path(home.to_str().unwrap());
-    let scripts_folder_path_str = scripts_folder_path.to_str().unwrap();
-    let tui = Arc::new(Mutex::new(Tui::new()));
+    let matches = App::new(env!("CARGO_PKG_NAME"))
+        .version(env!("CARGO_PKG_VERSION"))
+        .arg(
+            Arg::with_name("port")
+                .help("You may give a name to your midi io port")
+                .short("p")
+                .long("port")
+                .value_name("name")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("home")
+                .help("If \"mep\" couldn't determine your home directory, to help it please run it with \"--home <absolute-path-to-your-home-directory>\"")
+                .long("home")
+                .value_name("home")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("clean")
+                .help("Remove \"~/.mep\" directory.")
+                .long("clean")
+                .takes_value(false),
+        )
+        .arg(
+            Arg::with_name("reset")
+                .help("Remove \"~/.mep\" folder's contents and populate with example scripts.")
+                .long("reset")
+                .takes_value(false),
+        )
+        .get_matches();
 
+    let tui = Arc::new(Mutex::new(Tui::new()));
     let (to_tui, from_main) = channel::<MainToTuiMessage>();
     let tui_clone = tui.clone();
 
@@ -104,7 +130,75 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    // Thread for script watcher
+    let home = match home_dir() {
+        Some(dir) => dir,
+        None => match matches.value_of("home") {
+            Some(path) => PathBuf::from(path),
+            None => {
+                lock!(tui).no_home()?;
+                std::process::exit(0x1);
+            }
+        },
+    };
+
+    let scripts_folder_path = get_scripts_folder_path(home.to_str().unwrap());
+    let scripts_folder_path_str = scripts_folder_path.to_str().unwrap();
+
+    if matches.is_present("clean") {
+        fs::remove_dir_all(scripts_folder_path_str)?;
+        lock!(tui).removed_scripts_folder()?;
+        std::process::exit(0x0);
+    }
+
+    if matches.is_present("reset") {
+        fs::remove_dir_all(scripts_folder_path_str)?;
+        lock!(tui).reset_scripts_folder()?;
+
+        let mut examples_path = PathBuf::new();
+        examples_path.push(env!("CARGO_MANIFEST_DIR"));
+        examples_path.push("..");
+        examples_path.push("example_scripts");
+
+        copy_directory_contents(examples_path.to_str().unwrap(), scripts_folder_path_str)?;
+    }
+
+    if !Path::new(scripts_folder_path_str).exists() {
+        lock!(tui).scripts_folder_not_found()?;
+
+        let mut examples_path = PathBuf::new();
+        examples_path.push(env!("CARGO_MANIFEST_DIR"));
+        examples_path.push("..");
+        examples_path.push("example_scripts");
+
+        copy_directory_contents(
+            &format!("{}", examples_path.display()),
+            scripts_folder_path_str,
+        )?;
+    }
+
+    let script_paths = fs::read_dir(&scripts_folder_path)?;
+    let shared_available_scripts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+    let mut available_scripts = lock!(shared_available_scripts);
+
+    to_tui.send(MainToTuiMessage::Clear)?;
+    to_tui.send(MainToTuiMessage::Intro)?;
+
+    for (index, path) in script_paths.enumerate() {
+        let path_buf = path?.path();
+        to_tui.send(MainToTuiMessage::ListScripts(
+            index.to_string(),
+            format!("{:?}", path_buf.file_name().unwrap()),
+        ))?;
+        let full_path = format!("{}", path_buf.display());
+        available_scripts.push(full_path);
+    }
+
+    if available_scripts.len() == 0 {
+        lock!(tui).empty_scripts_folder()?;
+        std::process::exit(0x0);
+    }
+
+    // Thread for the script watcher
     let (to_main, from_watcher) = channel::<WatcherToMainMessage>();
     std::thread::spawn(move || loop {
         let (sender, receiver) = channel();
@@ -150,89 +244,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    let matches = App::new(env!("CARGO_PKG_NAME"))
-        .version(env!("CARGO_PKG_VERSION"))
-        .arg(
-            Arg::with_name("port")
-                .help("You may give a name to your midi io port")
-                .short("p")
-                .long("port")
-                .value_name("name")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("clean")
-                .help("Remove \"~/.mep\" directory.")
-                .long("clean")
-                .takes_value(false),
-        )
-        .arg(
-            Arg::with_name("reset")
-                .help("Remove \"~/.mep\" folder's contents and populate with example scripts.")
-                .long("reset")
-                .takes_value(false),
-        )
-        .get_matches();
-
-    if matches.is_present("clean") {
-        fs::remove_dir_all(scripts_folder_path_str)?;
-        lock!(tui).removed_scripts_folder()?;
-        std::process::exit(0x0);
-    }
-
-    if matches.is_present("reset") {
-        fs::remove_dir_all(scripts_folder_path_str)?;
-        lock!(tui).reset_scripts_folder()?;
-
-        let mut examples_path = PathBuf::new();
-        examples_path.push(env!("CARGO_MANIFEST_DIR"));
-        examples_path.push("..");
-        examples_path.push("example_scripts");
-
-        copy_directory_contents(examples_path.to_str().unwrap(), scripts_folder_path_str)?;
-    }
-
-    if !Path::new(scripts_folder_path_str).exists() {
-        lock!(tui).scripts_folder_not_found()?;
-
-        let mut examples_path = PathBuf::new();
-        examples_path.push(env!("CARGO_MANIFEST_DIR"));
-        examples_path.push("..");
-        examples_path.push("example_scripts");
-
-        copy_directory_contents(
-            &format!("{}", examples_path.display()),
-            scripts_folder_path_str,
-        )?;
-    }
-
-    let script_paths = fs::read_dir(scripts_folder_path)?;
-    to_tui.send(MainToTuiMessage::Clear)?;
-    to_tui.send(MainToTuiMessage::Intro)?;
-    let shared_available_scripts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
-    let mut available_scripts = lock!(shared_available_scripts);
-
-    for (index, path) in script_paths.enumerate() {
-        let path_buf = path?.path();
-
-        to_tui.send(MainToTuiMessage::ListScripts(
-            index.to_string(),
-            format!("{:?}", path_buf.file_name().unwrap()),
-        ))?;
-        let full_path = format!("{}", path_buf.display());
-        available_scripts.push(full_path);
-    }
-
-    if available_scripts.len() == 0 {
-        lock!(tui).empty_scripts_folder()?;
-        std::process::exit(0x0);
-    }
-
-    // --
     let mut choice = String::new();
     let mut chosen_idx: usize;
     let max_idx = available_scripts.len() - 1;
     to_tui.send(MainToTuiMessage::WaitForChoice)?;
+
     loop {
         stdin().read_line(&mut choice)?;
         chosen_idx = match choice.trim().parse() {
@@ -256,6 +272,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let chosen_script =
         fs::read_to_string(&available_scripts[chosen_idx]).expect("Couldn't read chosen script.");
     let chosen_script_path = available_scripts[chosen_idx].clone();
+
     let shared_koto_runtime = Arc::new(Mutex::new(Koto::default()));
     let shared_koto_runtime_clone = shared_koto_runtime.clone();
     let mut runtime = lock!(shared_koto_runtime_clone);
@@ -335,8 +352,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         (*available_scripts).clone(),
     ))?;
 
-    // ---
-
     mep_in.create_virtual(
             mep_input_port_name,
             move |_stamp, message, _| {
@@ -390,8 +405,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         });
         from_stdin
     }
-    // We loop here for other choices of scripts.
+
     let stdin_channel = spawn_stdin_channel();
+
+    // Enter main loop.
     loop {
         match stdin_channel.try_recv() {
             Ok(mut choice) => {

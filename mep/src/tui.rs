@@ -34,6 +34,10 @@ impl Tui {
         self.write_line("Here are your event processor scripts,".blue())?;
         Ok(())
     }
+    pub fn no_home(&self) -> Result<(), Box<dyn Error>> {
+        self.write_line("\"mep\" couldn't determine your home directory, to help it please run it with \"--home <absolute-path-to-your-home-directory>\"".blue())?;
+        Ok(())
+    }
     pub fn empty_scripts_folder(&self) -> Result<(), Box<dyn Error>> {
         self.clear_lines(1)?;
         self.write_line(
