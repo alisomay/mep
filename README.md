@@ -60,7 +60,7 @@ Look for info in the [koto main repository](https://github.com/koto-lang/koto) t
 
   Errors in your scripts would navigate you to a new screen and show you the koto error.
   **mep** will let you know which script caused the error and wait for changes.
-  After you fixed your erroring script in "~/.mep" folder, it will move to the screen where you can choose your scripts again.
+  After you fixed your erroring script in `~/.mep` folder, it will move to the screen where you can choose your scripts again.
 
 ## Building
 
