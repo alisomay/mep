@@ -207,8 +207,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let script_paths = fs::read_dir(&scripts_folder_path)?;
-    let shared_available_scripts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
-    let mut available_scripts = lock!(shared_available_scripts);
+    let mut available_scripts = vec![];
 
     to_tui.send(MainToTuiMessage::Clear)?;
     to_tui.send(MainToTuiMessage::Intro)?;
@@ -314,10 +313,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let chosen_script_path = available_scripts[chosen_idx].clone();
 
     // Init script runtime
-    let shared_koto_runtime = Arc::new(Mutex::new(Koto::default()));
-    let shared_koto_runtime_clone = shared_koto_runtime.clone();
-
-    let mut runtime = lock!(shared_koto_runtime_clone);
+    let mut runtime = Koto::default();
     runtime.set_script_path(Some(PathBuf::from(&available_scripts[chosen_idx])));
 
     // Init midi ports
@@ -343,7 +339,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         None => "mep_out",
     };
 
-    let shared_mep_out_port = Arc::new(Mutex::new(
+    let mep_out_port = Arc::new(Mutex::new(
         mep_out
             .create_virtual(mep_output_port_name)
             .expect("Couldn't create a virtual output midi port."),
@@ -373,7 +369,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .collect::<std::result::Result<Vec<u8>, RuntimeError>>();
             let _result: Result<_, RuntimeError> =
                 // `&msg.unwrap()` will always succeed.
-                match lock!(shared_mep_out_port).send(&msg.unwrap()[..]) {
+                match lock!(mep_out_port).send(&msg.unwrap()[..]) {
                     Ok(_) => Ok(()),
                     Err(e) => {
                         runtime_error!(format!("Error when trying to send midi message: {}", e))
@@ -385,47 +381,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     });
 
     // Make the handler call "midi.listen" function
-    mep_in.create_virtual(
+    let (midi_in_to_main, from_midi_in) = channel::<Vec<u8>>();
+    let _mep_in_port = mep_in
+        .create_virtual(
             mep_input_port_name,
             move |_stamp, message, _| {
-                let _res: Result<(), RuntimeError> = match shared_koto_runtime.try_lock() {
-                    Ok(mut runtime) => match runtime.prelude().data().get_with_string("midi") {
-                        Some(midi_module) => match midi_module {
-                            Value::Map(midi_module) => match midi_module.data().get_with_string("listen") {
-                                Some(message_listener) => match message_listener {
-                                    Value::Function(_) => {
-                                        // Make a list of koto values from u8 slice.
-                                        let message_values = message.iter().map(|byte| Value::Number(byte.into())).collect::<Vec<Value>>();
-                                        // Call "midi.listen" function in script with the midi message.
-                                        match runtime.call_function(
-                                            message_listener.clone(),
-                                            &[Value::List(ValueList::from_slice(&message_values))],
-                                        ) {
-                                            Ok(_) => Ok(()),
-                                            Err(e) => {
-                                                runtime_error!(format!("{}", e))
-                                            }
-                                        }
-                                    }
-                                    _ => runtime_error!(
-                                        "\"midi.listen\" is defined but it is not a function"
-                                    ),
-                                },
-                                None => {
-                                    runtime_error!("Try defining a function as \"midi.listen\"")
-                                }
-                            },
-                            _ => runtime_error!("\"midi\" has been found but it is not a map. Try importing \"midi\" on top of your script like \"import midi\". And do not use the same name further."),
-                        },
-                        _ => runtime_error!("Try importing \"midi\" on top of your script like \"import midi\""),
-                    },
-                    Err(e) => {
-                        runtime_error!(format!("{}", e))
-                    }
-                };
+                let msg: Vec<u8> = message.iter().copied().collect();
+                midi_in_to_main.send(msg).unwrap();
             },
             (),
-        ).expect("Couldn't create a virtual input midi port.");
+        )
+        .expect("Couldn't create a virtual input midi port.");
 
     // Add "koto_midi", "random" and other custom extensions to script runtime prelude.
     let mut prelude = runtime.prelude();
@@ -443,7 +409,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     to_tui.send(MainToTuiMessage::HighlightAndRender(
         chosen_idx.to_string(),
-        (*available_scripts).clone(),
+        available_scripts.clone(),
     ))?;
 
     runtime.run()?;
@@ -469,6 +435,42 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Main loop
     loop {
+        // Process midi received messages
+        // TODO: Make runtime errors recoverable and better handled.
+        if let Ok(message) = from_midi_in.try_recv() {
+            match runtime.prelude().data().get_with_string("midi") {
+                Some(midi_module) => match midi_module {
+                    Value::Map(midi_module) => match midi_module.data().get_with_string("listen") {
+                        Some(message_listener) => match message_listener {
+                            Value::Function(_) => {
+                                // Make a list of koto values from u8 slice.
+                                let message_values = message.iter().map(|byte| Value::Number(byte.into())).collect::<Vec<Value>>();
+                                // Call "midi.listen" function in script with the midi message.
+                                match runtime.call_function(
+                                    message_listener.clone(),
+                                    &[Value::List(ValueList::from_slice(&message_values))],
+                                ) {
+                                    Ok(_) => {},
+                                    Err(e) => {
+                                        runtime_error!(format!("{}", e))?
+                                    }
+                                }
+                            }
+                            _ =>
+                                runtime_error!(
+                                "\"midi.listen\" is defined but it is not a function"
+                            )?,
+                        },
+                        None => {
+                            runtime_error!("Try defining a function as \"midi.listen\"")?
+                        }
+                    },
+                    _ => runtime_error!("\"midi\" has been found but it is not a map. Try importing \"midi\" on top of your script like \"import midi\". And do not use the same name further.")?,
+                },
+                _ => runtime_error!("Try importing \"midi\" on top of your script like \"import midi\"")?,
+            };
+        }
+
         match stdin_channel.try_recv() {
             Ok(mut choice) => {
                 chosen_idx = match choice.clone().trim().parse() {
@@ -503,11 +505,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
                 to_tui.send(MainToTuiMessage::HighlightAndRender(
                     chosen_idx.to_string(),
-                    (*available_scripts).clone(),
+                    available_scripts.clone(),
                 ))?;
             }
             Err(TryRecvError::Empty) => {
-                if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
+                if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.try_recv() {
                     loop {
                         let chosen_script_path = path
                             .to_str()
@@ -527,7 +529,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 // Re-render
                                 to_tui.send(MainToTuiMessage::HighlightAndRender(
                                     chosen_idx.to_string(),
-                                    (*available_scripts).clone(),
+                                    available_scripts.clone(),
                                 ))?;
                                 break;
                             }
