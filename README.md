@@ -63,7 +63,7 @@ Look for info in the [koto main repository](https://github.com/koto-lang/koto) t
 
   After you fixed your erroring script in `~/.mep` folder, it will move to the screen where you can choose your scripts again.
 
-  Please check [todo](###Todo) section for some exceptions to this behavior.
+  Please check [todo](#todo) section for some exceptions to this behavior.
 
 ## Building
 
