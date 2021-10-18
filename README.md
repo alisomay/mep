@@ -42,7 +42,7 @@ Look for info in the [koto main repository](https://github.com/koto-lang/koto) t
 
   Please visit the [main repository](https://github.com/koto-lang/koto) for more information.
 
-- _How do we process midi with koto?_
+- _How to process midi with koto?_
 
   I've written a [midi library](https://github.com/alisomay/koto_midi) (_toolkit_) for koto. Koto scripts which are run by **mep** have access to this library.
 
@@ -56,11 +56,14 @@ Look for info in the [koto main repository](https://github.com/koto-lang/koto) t
 
   Currently if you visit the [repository](https://github.com/alisomay/koto_midi) and follow the instructions to run tests, a complete API will be printed to `stdout`. You can take this as a reference. For sure in the future a more ergonomic way will be introduced.
 
-- _How may do I debug my scripts?_
+- _How may I debug my scripts?_
 
   Errors in your scripts would navigate you to a new screen and show you the koto error.
   **mep** will let you know which script caused the error and wait for changes.
+
   After you fixed your erroring script in `~/.mep` folder, it will move to the screen where you can choose your scripts again.
+
+  Please check [todo](###Todo) section for some exceptions to this behavior.
 
 ## Building
 
@@ -87,3 +90,9 @@ You may bring it in scope by writing `import random` in koto scripts.
 
 Currently **mep** is in early development stage and not stable.
 A release will be made when required stability is achieved.
+
+### Todo
+
+- Do not panic in `runtime_error!` macros. Fall back to watcher and notify user to fix the script.
+- Improve code quality.
+- Add tests where possible.
