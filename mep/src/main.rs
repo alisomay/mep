@@ -1,3 +1,18 @@
+// Restrict
+#![warn(clippy::all, clippy::pedantic, clippy::restriction)]
+// Allow
+#![allow(
+    clippy::blanket_clippy_restriction_lints,
+    clippy::float_arithmetic,
+    clippy::implicit_return,
+    clippy::needless_return,
+    clippy::missing_docs_in_private_items,
+    clippy::too_many_lines,
+    clippy::panic_in_result_fn,
+    clippy::enum_glob_use,
+    clippy::indexing_slicing,
+    clippy::wildcard_enum_match_arm
+)]
 mod tui;
 use dirs::home_dir;
 use std::{
@@ -12,7 +27,7 @@ use std::{
     },
     time::Duration,
 };
-use tui::*;
+use tui::Tui;
 
 use koto::{
     runtime::{runtime_error, RuntimeError, Value, ValueList, ValueNumber},
@@ -95,7 +110,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Initialize terminal ui (tui)
     let tui = Arc::new(Mutex::new(Tui::new()));
     let (to_tui, from_main) = channel::<MainToTuiMessage>();
-    let tui_clone = tui.clone();
+    let tui_clone = Arc::clone(&tui);
 
     // Start the listener for terminal ui (tui)
     std::thread::spawn(move || loop {
@@ -152,13 +167,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Try to discover user's home directory
     let home = match home_dir() {
         Some(dir) => dir,
-        None => match matches.value_of("home") {
-            Some(path) => PathBuf::from(path),
-            None => {
+        None => {
+            if let Some(path) = matches.value_of("home") {
+                PathBuf::from(path)
+            } else {
                 lock!(tui).no_home()?;
                 std::process::exit(Exit::Unavailable as i32);
             }
-        },
+        }
     };
 
     let scripts_folder_path = get_scripts_folder_path(
@@ -239,68 +255,75 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // "~/.mep" folder is empty
-    if available_scripts.len() == 0 {
+    if available_scripts.is_empty() {
         lock!(tui).empty_scripts_folder()?;
         std::process::exit(Exit::Unavailable as i32);
     }
 
     // Start a watcher for "~/.mep" folder in its own thread.
     let (to_main, from_watcher) = channel::<WatcherToMainMessage>();
-    std::thread::spawn(move || loop {
-        let (sender, receiver) = channel();
-        let mut watcher =
-            watcher(sender, Duration::from_secs(1)).expect("Failed to create script watcher.");
-        let mut watcher_path = home.clone();
-        watcher_path.push(SCRIPTS_FOLDER_NAME);
+    let _watcher_thread =
+        std::thread::spawn(move || -> Result<(), Box<dyn Error + Send + Sync>> {
+            loop {
+                let (sender, receiver) = channel();
+                let mut watcher = watcher(sender, Duration::from_secs(1))?;
+                let mut watcher_path = home.clone();
+                watcher_path.push(SCRIPTS_FOLDER_NAME);
+                watcher.watch(
+                    watcher_path.to_str().expect("Failed to convert "),
+                    RecursiveMode::Recursive,
+                )?;
 
-        watcher
-            .watch(
-                watcher_path.to_str().expect("Failed to convert "),
-                RecursiveMode::Recursive,
-            )
-            .expect("Watch of \"~/.mep\" folder failed.");
-
-        if let Ok(event) = receiver.recv() {
-            match event {
-                DebouncedEvent::Write(path) | DebouncedEvent::NoticeWrite(path) => {
-                    if let Some(extension) = path.extension() {
-                        match extension.to_str() {
-                            Some(extension) if "koto" == extension => {
-                                // It is safe to unwrap here in my opinion because the receiver is the main thread.
-                                to_main.send(WatcherToMainMessage::Change(path)).unwrap();
+                if let Ok(event) = receiver.recv() {
+                    match event {
+                        // TODO: Sort out which events to respond
+                        DebouncedEvent::Write(path) | DebouncedEvent::NoticeWrite(path) => {
+                            if let Some(extension) = path.extension() {
+                                match extension.to_str() {
+                                    Some(extension) if "koto" == extension => {
+                                        // It is safe to unwrap here in my opinion because the receiver is the main thread.
+                                        to_main.send(WatcherToMainMessage::Change(path))?;
+                                    }
+                                    _ => {
+                                        // Ignore files other than koto scripts
+                                    }
+                                }
                             }
-                            _ => {
-                                // Ignore files other than koto scripts
-                            }
+                        }
+                        DebouncedEvent::NoticeRemove(_)
+                        | DebouncedEvent::Create(_)
+                        | DebouncedEvent::Chmod(_)
+                        | DebouncedEvent::Remove(_)
+                        | DebouncedEvent::Rename(..)
+                        | DebouncedEvent::Rescan
+                        | DebouncedEvent::Error(..) => {
+                            // Ignore other events
                         }
                     }
                 }
-                _ => {
-                    // Ignore other events
-                }
             }
-        }
-    });
+        });
 
     let mut choice = String::new();
     let mut chosen_idx: usize;
+    // At this point we know that "available_scripts" is greater than 0.
+    #[allow(clippy::integer_arithmetic)]
     let max_idx = available_scripts.len() - 1;
     to_tui.send(MainToTuiMessage::WaitForChoice)?;
 
     loop {
         // Get user input
         stdin().read_line(&mut choice)?;
-        chosen_idx = match choice.trim().parse() {
-            Ok(idx) => idx,
-            Err(_) => {
-                // User entered invalid value try again
-                choice.clear();
-                to_tui.send(MainToTuiMessage::IgnoreChoice)?;
-                continue;
-            }
+        chosen_idx = if let Ok(idx) = choice.trim().parse() {
+            idx
+        } else {
+            // User entered invalid value or negative value, try again
+            choice.clear();
+            to_tui.send(MainToTuiMessage::IgnoreChoice)?;
+            continue;
         };
         if chosen_idx > max_idx {
-            // User entered value out of bounds try again
+            // User entered index out of positive bounds, try again
             choice.clear();
             to_tui.send(MainToTuiMessage::IgnoreChoice)?;
             continue;
@@ -308,8 +331,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         break;
     }
 
-    let chosen_script =
-        fs::read_to_string(&available_scripts[chosen_idx]).expect("Couldn't read chosen script.");
+    let chosen_script = fs::read_to_string(&available_scripts[chosen_idx])?;
     let chosen_script_path = available_scripts[chosen_idx].clone();
 
     // Init script runtime
@@ -339,11 +361,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         None => "mep_out",
     };
 
-    let mep_out_port = Arc::new(Mutex::new(
-        mep_out
-            .create_virtual(mep_output_port_name)
-            .expect("Couldn't create a virtual output midi port."),
-    ));
+    let mep_out_port = Arc::new(Mutex::new(mep_out.create_virtual(mep_output_port_name)?));
 
     // Init "koto_midi" library
     let mut midi_module = koto_midi::make_module();
@@ -357,9 +375,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             let msg = message
                 .data()
                 .iter()
-                .map(|value| match value {
+                .map(|value| match *value {
                     Value::Number(num) => match num {
-                        ValueNumber::I64(byte) if *byte >= 0 && *byte < 256 => Ok(*byte as u8),
+                        #[allow(clippy::cast_sign_loss)]
+                        #[allow(clippy::cast_possible_truncation)]
+                        #[allow(clippy::as_conversions)]
+                        // These are all fine because the value of `byte` is checked if it is in u8 range before.
+                        ValueNumber::I64(byte) if (0..=255).contains(&byte) => Ok(byte as u8),
+
                         _ => runtime_error!(send_error_message),
                     },
                     _ => {
@@ -382,16 +405,19 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Make the handler call "midi.listen" function
     let (midi_in_to_main, from_midi_in) = channel::<Vec<u8>>();
-    let _mep_in_port = mep_in
-        .create_virtual(
-            mep_input_port_name,
-            move |_stamp, message, _| {
-                let msg: Vec<u8> = message.iter().copied().collect();
-                midi_in_to_main.send(msg).unwrap();
-            },
-            (),
-        )
-        .expect("Couldn't create a virtual input midi port.");
+    let _mep_in_port = mep_in.create_virtual(
+        mep_input_port_name,
+        move |_stamp, message, _| {
+            let msg: Vec<u8> = message.iter().copied().collect();
+            match midi_in_to_main.send(msg) {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("{}", e);
+                }
+            }
+        },
+        (),
+    )?;
 
     // Add "koto_midi", "random" and other custom extensions to script runtime prelude.
     let mut prelude = runtime.prelude();
@@ -402,7 +428,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     try_compile(
         &to_tui,
         &from_watcher,
-        chosen_script,
+        &chosen_script,
         chosen_script_path,
         &mut runtime,
     )?;
@@ -415,22 +441,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     runtime.run()?;
 
     // A thread for non-blocking stdin
-    fn spawn_stdin_channel() -> Receiver<String> {
-        let (stdin_to_main, from_stdin) = channel::<String>();
-        std::thread::spawn(move || loop {
-            let mut choice = String::new();
-            match stdin().read_line(&mut choice) {
-                Ok(_) => match stdin_to_main.send(choice) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        eprintln!("{:?}", e);
-                    }
-                },
-                Err(e) => eprintln!("{:?}", e),
-            }
-        });
-        from_stdin
-    }
     let stdin_channel = spawn_stdin_channel();
 
     // Main loop
@@ -473,32 +483,29 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         match stdin_channel.try_recv() {
             Ok(mut choice) => {
-                chosen_idx = match choice.clone().trim().parse() {
-                    Ok(idx) => idx,
-                    Err(_) => {
-                        // User entered invalid value try again
-                        choice.clear();
-                        to_tui.send(MainToTuiMessage::IgnoreChoice)?;
-                        continue;
-                    }
+                chosen_idx = if let Ok(idx) = choice.trim().parse() {
+                    idx
+                } else {
+                    // User entered invalid value or negative value, try again
+                    choice.clear();
+                    to_tui.send(MainToTuiMessage::IgnoreChoice)?;
+                    continue;
                 };
-
-                // User entered value out of bounds try again
                 if chosen_idx > max_idx {
+                    // User entered index out of positive bounds, try again
                     choice.clear();
                     to_tui.send(MainToTuiMessage::IgnoreChoice)?;
                     continue;
                 }
 
                 let chosen_script_path = available_scripts[chosen_idx].clone();
-                let chosen_script =
-                    fs::read_to_string(&chosen_script_path).expect("Couldn't read chosen script.");
+                let chosen_script = fs::read_to_string(&chosen_script_path)?;
 
                 // Tries to compile the chosen script with dynamic error handling.
                 try_compile(
                     &to_tui,
                     &from_watcher,
-                    chosen_script,
+                    &chosen_script,
                     chosen_script_path.clone(),
                     &mut runtime,
                 )?;
@@ -520,7 +527,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         match try_compile(
                             &to_tui,
                             &from_watcher,
-                            chosen_script,
+                            &chosen_script,
                             chosen_script_path,
                             &mut runtime,
                         ) {
@@ -541,19 +548,34 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
             }
+            // TODO: Convert this to an error
             Err(TryRecvError::Disconnected) => panic!("Channel disconnected"),
         }
     }
 }
 
+fn spawn_stdin_channel() -> Receiver<String> {
+    let (stdin_to_main, from_stdin) = channel::<String>();
+    std::thread::spawn(
+        move || -> Result<Receiver<String>, Box<dyn Error + Send + Sync>> {
+            loop {
+                let mut choice = String::new();
+                if let Ok(_) = stdin().read_line(&mut choice) {
+                    stdin_to_main.send(choice)?;
+                }
+            }
+        },
+    );
+    from_stdin
+}
 fn try_compile(
     to_tui: &std::sync::mpsc::Sender<MainToTuiMessage>,
     from_watcher: &Receiver<WatcherToMainMessage>,
-    chosen_script: String,
+    chosen_script: &str,
     chosen_script_path: String,
     runtime: &mut Koto,
 ) -> Result<(), Box<dyn Error>> {
-    match runtime.compile(&chosen_script) {
+    match runtime.compile(chosen_script) {
         Ok(chunk) => match runtime.run_chunk(chunk) {
             Ok(_) => Ok(()),
             Err(e) => {
@@ -570,12 +592,11 @@ fn try_compile(
                             .to_str()
                             .expect("Tried to convert invalid unicode string.")
                             .to_string();
-                        let chosen_script = fs::read_to_string(&chosen_script_path)
-                            .expect("Couldn't read chosen script.");
+                        let chosen_script = fs::read_to_string(&chosen_script_path)?;
                         match try_compile(
                             to_tui,
                             from_watcher,
-                            chosen_script,
+                            &chosen_script,
                             chosen_script_path,
                             runtime,
                         ) {
@@ -606,12 +627,11 @@ fn try_compile(
                         .to_str()
                         .expect("Tried to convert invalid unicode string.")
                         .to_string();
-                    let chosen_script = fs::read_to_string(&chosen_script_path)
-                        .expect("Couldn't read chosen script.");
+                    let chosen_script = fs::read_to_string(&chosen_script_path)?;
                     match try_compile(
                         to_tui,
                         from_watcher,
-                        chosen_script,
+                        &chosen_script,
                         chosen_script_path,
                         runtime,
                     ) {
