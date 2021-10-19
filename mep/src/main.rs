@@ -14,7 +14,8 @@
     clippy::enum_glob_use,
     clippy::indexing_slicing,
     clippy::wildcard_enum_match_arm,
-    clippy::missing_errors_doc
+    clippy::missing_errors_doc,
+    clippy::pattern_type_mismatch
 )]
 #![feature(stmt_expr_attributes)]
 
@@ -391,13 +392,10 @@ fn main() -> Result<()> {
             mep_input_port_name,
             move |_stamp, message, _| {
                 let msg: Vec<u8> = message.iter().copied().collect();
-                match midi_in_to_main.send(msg) {
-                    Ok(_) => {}
-                    Err(err) => {
-                        // TODO: Give tui the job to display this error.
-                        println!("{}", err);
-                    }
-                }
+                #[allow(clippy::unwrap_used)]
+                // The receiver is in the main thread and will live through the whole lifetime of the app.
+                // Because of this unwrap is safe here.
+                midi_in_to_main.send(msg).unwrap();
             },
             (),
         )
@@ -419,7 +417,7 @@ fn main() -> Result<()> {
         &to_tui,
         &from_watcher,
         &chosen_script,
-        chosen_script_path,
+        chosen_script_path.clone(),
         &mut runtime,
     )?;
 
@@ -436,39 +434,34 @@ fn main() -> Result<()> {
     // Main loop
     loop {
         // Process midi received messages
-        // TODO: Make runtime errors recoverable and better handled.
         if let Ok(message) = from_midi_in.try_recv() {
-            match runtime.prelude().data().get_with_string("midi") {
-                Some(midi_module) => match midi_module {
-                    Value::Map(midi_module) => match midi_module.data().get_with_string("listen") {
-                        Some(message_listener) => match message_listener {
-                            Value::Function(_) => {
-                                // Make a list of koto values from u8 slice.
-                                let message_values = message.iter().map(|byte| Value::Number(byte.into())).collect::<Vec<Value>>();
-                                // Call "midi.listen" function in script with the midi message.
-                                match runtime.call_function(
-                                    message_listener.clone(),
-                                    &[Value::List(ValueList::from_slice(&message_values))],
-                                ) {
-                                    Ok(_) => {},
-                                    Err(e) => {
-                                        runtime_error!(format!("{}", e))?
-                                    }
-                                }
-                            }
-                            _ =>
-                                runtime_error!(
-                                "\"midi.listen\" is defined but it is not a function"
-                            )?,
-                        },
-                        None => {
-                            runtime_error!("Try defining a function as \"midi.listen\"")?
+            loop {
+                match call_midi_listen_with(&message, &mut runtime) {
+                    Ok(_) => break,
+                    Err(err) => {
+                        to_tui.send(MainToTuiMessage::Clear)?;
+                        to_tui.send(MainToTuiMessage::ErrorInScript(
+                            chosen_script_path.clone(),
+                            err.to_string(),
+                        ))?;
+                        if let Ok(WatcherToMainMessage::Change(_)) = from_watcher.recv() {
+                            // A fix attempt had been made.
+                            if call_midi_listen_with(&message, &mut runtime).is_ok() {
+                                // Script is fixed.                                                                        // Re-render
+                                to_tui.send(MainToTuiMessage::HighlightAndRender(
+                                    chosen_idx.to_string(),
+                                    available_scripts.clone(),
+                                ))?;
+                                break;
+                            } 
+                            
+                            // Try one more time
+                            continue;
+                            
                         }
-                    },
-                    _ => runtime_error!("\"midi\" has been found but it is not a map. Try importing \"midi\" on top of your script like \"import midi\". And do not use the same name further.")?,
-                },
-                _ => runtime_error!("Try importing \"midi\" on top of your script like \"import midi\"")?,
-            };
+                    }
+                }
+            }
         }
 
         match stdin_channel.try_recv() {
@@ -540,6 +533,33 @@ fn main() -> Result<()> {
     }
 }
 
+fn call_midi_listen_with(message: &[u8], runtime: &mut Koto) -> Result<()> {
+    match runtime.prelude().data().get_with_string("midi") {
+        Some(midi_module) => match midi_module {
+            Value::Map(midi_module) => match midi_module.data().get_with_string("listen") {
+                Some(message_listener) => match message_listener {
+                    Value::Function(_) => {
+                        // Make a list of koto values from u8 slice.
+                        let message_values = message.iter().map(|byte| Value::Number(byte.into())).collect::<Vec<Value>>();
+                        // Call "midi.listen" function in script with the midi message.
+                        runtime.call_function(
+                            message_listener.clone(),
+                            &[Value::List(ValueList::from_slice(&message_values))],
+                        ).map(|_| ()).map_err(|err| anyhow!(err.to_string()))                          
+                    }
+                    _ => Err(anyhow!("\"midi.listen\" is defined but it is not a function")),
+                },
+                None => {
+                    Err(anyhow!("Try defining a function as \"midi.listen\""))
+                }
+            },
+            _ => Err(anyhow!("\"midi\" has been found but it is not a map. Try importing \"midi\" on top of your script like \"import midi\". And do not use the same name further.")),
+        },
+        None => Err(anyhow!("Try importing \"midi\" on top of your script like \"import midi\"")),
+    }
+}
+
+
 fn spawn_stdin_channel() -> Receiver<String> {
     let (stdin_to_main, from_stdin) = channel::<String>();
     std::thread::spawn(move || -> Result<Receiver<String>> {
@@ -563,7 +583,7 @@ fn try_compile(
         Ok(chunk) => match runtime.run_chunk(chunk) {
             Ok(_) => Ok(()),
             Err(e) => {
-                // Compile time error found in script.
+                // Runtime time error found in script.
                 to_tui.send(MainToTuiMessage::Clear)?;
                 to_tui.send(MainToTuiMessage::ErrorInScript(
                     chosen_script_path,
