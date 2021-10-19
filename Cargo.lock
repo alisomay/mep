@@ -34,6 +34,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.44"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61604a8f862e1d5c3229fdd78f8b02c68dcf73a4c4b05fd636d12240aaa242c1"
+
+[[package]]
 name = "atty"
 version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -97,13 +103,13 @@ dependencies = [
 
 [[package]]
 name = "console"
-version = "0.14.1"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3993e6445baa160675931ec041a5e03ca84b9c6e32a056150d3aa2bdda0a1f45"
+checksum = "a28b32d32ca44b70c3e4acd7db1babf555fa026e385fb95f18028f88848b3c31"
 dependencies = [
  "encode_unicode",
- "lazy_static",
  "libc",
+ "once_cell",
  "regex",
  "terminal_size",
  "unicode-width",
@@ -152,14 +158,14 @@ dependencies = [
 
 [[package]]
 name = "crossterm"
-version = "0.21.0"
+version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "486d44227f71a1ef39554c0dc47e44b9f4139927c75043312690c3f476d1d788"
+checksum = "c85525306c4291d1b73ce93c8acf9c339f9b213aef6c1d85c3830cbf1c16325c"
 dependencies = [
  "bitflags",
  "crossterm_winapi",
  "libc",
- "mio 0.7.13",
+ "mio 0.7.14",
  "parking_lot",
  "signal-hook",
  "signal-hook-mio",
@@ -168,9 +174,9 @@ dependencies = [
 
 [[package]]
 name = "crossterm_winapi"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a6966607622438301997d3dac0d2f6e9a90c68bb6bc1785ea98456ab93c0507"
+checksum = "2ae1b35a484aa10e07fe0638d02301c5ad24de82d310ccbd2f3693da5f09bf1c"
 dependencies = [
  "winapi 0.3.9",
 ]
@@ -323,9 +329,9 @@ dependencies = [
 
 [[package]]
 name = "instant"
-version = "0.1.11"
+version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "716d3d89f35ac6a34fd0eed635395f4c3b76fa889338a4632e5231a8684216bd"
+checksum = "7a5bbe824c507c5da5956355e86a746d82e0e1464f65d862cc5e71da70e94b2c"
 dependencies = [
  "cfg-if 1.0.0",
  "js-sys",
@@ -364,7 +370,7 @@ dependencies = [
 [[package]]
 name = "koto"
 version = "0.8.1"
-source = "git+https://github.com/koto-lang/koto?branch=main#33b62afffb334966cda1ab00f2a104f83060e002"
+source = "git+https://github.com/koto-lang/koto?branch=main#553eda587293b1b4e97167a6823f78d3289e1015"
 dependencies = [
  "koto_bytecode",
  "koto_parser",
@@ -375,7 +381,7 @@ dependencies = [
 [[package]]
 name = "koto_bytecode"
 version = "0.8.1"
-source = "git+https://github.com/koto-lang/koto?branch=main#33b62afffb334966cda1ab00f2a104f83060e002"
+source = "git+https://github.com/koto-lang/koto?branch=main#553eda587293b1b4e97167a6823f78d3289e1015"
 dependencies = [
  "koto_parser",
  "smallvec",
@@ -384,7 +390,7 @@ dependencies = [
 [[package]]
 name = "koto_lexer"
 version = "0.8.1"
-source = "git+https://github.com/koto-lang/koto?branch=main#33b62afffb334966cda1ab00f2a104f83060e002"
+source = "git+https://github.com/koto-lang/koto?branch=main#553eda587293b1b4e97167a6823f78d3289e1015"
 dependencies = [
  "unicode-width",
  "unicode-xid",
@@ -393,7 +399,7 @@ dependencies = [
 [[package]]
 name = "koto_midi"
 version = "0.0.1"
-source = "git+https://github.com/alisomay/koto_midi?branch=main#fb91a3722ff8bfb9d1497e5e58facc9c19e24d01"
+source = "git+https://github.com/alisomay/koto_midi?branch=main#2d12548051a5bb8a561b44428523d7fbc3e2cadd"
 dependencies = [
  "koto",
 ]
@@ -401,7 +407,7 @@ dependencies = [
 [[package]]
 name = "koto_parser"
 version = "0.8.1"
-source = "git+https://github.com/koto-lang/koto?branch=main#33b62afffb334966cda1ab00f2a104f83060e002"
+source = "git+https://github.com/koto-lang/koto?branch=main#553eda587293b1b4e97167a6823f78d3289e1015"
 dependencies = [
  "koto_lexer",
 ]
@@ -419,7 +425,7 @@ dependencies = [
 [[package]]
 name = "koto_runtime"
 version = "0.8.1"
-source = "git+https://github.com/koto-lang/koto?branch=main#33b62afffb334966cda1ab00f2a104f83060e002"
+source = "git+https://github.com/koto-lang/koto?branch=main#553eda587293b1b4e97167a6823f78d3289e1015"
 dependencies = [
  "downcast-rs",
  "indexmap",
@@ -448,9 +454,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.103"
+version = "0.2.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd8f7255a17a627354f321ef0055d63b898c6fb27eff628af4d1b66b7331edf6"
+checksum = "7b2f96d100e1cf1929e7719b7edb3b90ab5298072638fccd77be9ce942ecdfce"
 
 [[package]]
 name = "lock_api"
@@ -480,6 +486,7 @@ checksum = "df39d232f5c40b0891c10216992c2f250c054105cb1e56f0fc9032db6203ecc1"
 name = "mep"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "clap",
  "console",
  "crossterm",
@@ -530,9 +537,9 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "0.7.13"
+version = "0.7.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c2bdb6314ec10835cd3293dd268473a835c02b7b352e788be788b3c6ca6bb16"
+checksum = "8067b404fe97c70829f082dec8bcf4f71225d7eaea1d8645349cb76fa06205cc"
 dependencies = [
  "libc",
  "log",
@@ -636,6 +643,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "once_cell"
+version = "1.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "692fcb63b64b1758029e0a96ee63e049ce8c5948587f2f7208df04625e5f6b56"
+
+[[package]]
 name = "parking_lot"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -668,15 +681,15 @@ checksum = "7c9b1041b4387893b91ee6746cddfc28516aff326a3519fb2adf820932c5e6cb"
 
 [[package]]
 name = "ppv-lite86"
-version = "0.2.10"
+version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac74c624d6b2d21f425f752262f42188365d7b8ff1aff74c82e45136510a4857"
+checksum = "c3ca011bd0129ff4ae15cd04c4eef202cadf6c51c21e47aba319b4e0501db741"
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.29"
+version = "1.0.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9f5105d4fdaab20335ca9565e106a5d9b82b6219b5ba735731124ac6711d23d"
+checksum = "edc3358ebc67bc8b7fa0c007f945b0b18226f78437d61bec735a9eb96b61ee70"
 dependencies = [
  "unicode-xid",
 ]
@@ -803,7 +816,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29fd5867f1c4f2c5be079aee7a2adf1152ebb04a4bc4d341f504b7dece607ed4"
 dependencies = [
  "libc",
- "mio 0.7.13",
+ "mio 0.7.14",
  "signal-hook",
 ]
 
@@ -818,9 +831,9 @@ dependencies = [
 
 [[package]]
 name = "slab"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c307a32c1c5c437f38c7fd45d753050587732ba8628319fbdf12a7e289ccc590"
+checksum = "9def91fd1e018fe007022791f865d0ccc9b3a0d5001e01aabb8b40e46000afb5"
 
 [[package]]
 name = "smallvec"

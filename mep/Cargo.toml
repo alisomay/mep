@@ -11,15 +11,14 @@ keywords = ["midi", "event processor", "command line"]
 
 [dependencies]
 clap = "2.33.3"
-console = "0.14.1"
-crossterm = "0.21.0"
+console = "0.15.0"
+crossterm = "0.22.1"
 dirs = "4.0.0"
 koto = { git = "https://github.com/koto-lang/koto", branch= "main" } 
 koto_midi = { git = "https://github.com/alisomay/koto_midi", branch= "main" } 
 koto_random = { path = "../koto_libraries/random" }
 midir = "0.7.0"
 notify = "4.0.17"
-
-
+anyhow = "1.0.44" 
 
 

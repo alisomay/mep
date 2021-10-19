@@ -11,12 +11,14 @@
     clippy::panic_in_result_fn,
     clippy::enum_glob_use,
     clippy::indexing_slicing,
-    clippy::wildcard_enum_match_arm
+    clippy::wildcard_enum_match_arm,
+    clippy::missing_errors_doc
 )]
+#![feature(stmt_expr_attributes)]
+
 mod tui;
 use dirs::home_dir;
 use std::{
-    error::Error,
     fs,
     io::stdin,
     path::{Path, PathBuf},
@@ -27,7 +29,7 @@ use std::{
     },
     time::Duration,
 };
-use tui::Tui;
+use tui::{Tui, BULB};
 
 use koto::{
     runtime::{runtime_error, RuntimeError, Value, ValueList, ValueNumber},
@@ -38,7 +40,9 @@ use midir::{
     MidiInput, MidiOutput,
 };
 
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{App, Arg};
+use crossterm::style::Stylize;
 
 use notify::{watcher, DebouncedEvent, RecursiveMode, Watcher};
 
@@ -48,13 +52,6 @@ macro_rules! lock {
     ($i:ident) => {
         $i.lock().unwrap()
     };
-}
-
-fn get_scripts_folder_path(home: &str) -> PathBuf {
-    let mut scripts_folder_path = PathBuf::new();
-    scripts_folder_path.push(&home);
-    scripts_folder_path.push(SCRIPTS_FOLDER_NAME);
-    scripts_folder_path
 }
 
 enum MainToTuiMessage {
@@ -70,12 +67,8 @@ enum WatcherToMainMessage {
     Change(PathBuf),
 }
 
-enum Exit {
-    Unavailable = 0x66,
-    Success = 0x00,
-}
-
-fn main() -> Result<(), Box<dyn Error>> {
+// TODO: Either determine the right error type for main or leave a trait object.
+fn main() -> Result<()> {
     let matches = App::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
         .arg(
@@ -113,52 +106,37 @@ fn main() -> Result<(), Box<dyn Error>> {
     let tui_clone = Arc::clone(&tui);
 
     // Start the listener for terminal ui (tui)
-    std::thread::spawn(move || loop {
-        use MainToTuiMessage::*;
-        if let Ok(message) = from_main.recv() {
-            match message {
-                // Greetings
-                Intro => {
-                    lock!(tui_clone)
-                        .intro()
-                        .expect("Failed to write to stdout.");
-                }
-                // List available scripts
-                ListScripts(index, file_name) => {
-                    lock!(tui_clone)
-                        .elements_to_choose(&index, &file_name)
-                        .expect("Failed to write to stdout.");
-                }
-                // Instruct user to choose
-                WaitForChoice => {
-                    lock!(tui_clone)
-                        .wait_for_choice()
-                        .expect("Failed to write to stdout.");
-                }
-                // Ignore invalid choices
-                IgnoreChoice => {
-                    lock!(tui_clone)
-                        .ignore_choice()
-                        .expect("Failed to write to stdout.");
-                }
-                // Clear screen
-                Clear => {
-                    lock!(tui_clone)
-                        .clear()
-                        .expect("Failed to write to stdout.");
-                }
-                // Highlight choice and list scripts again
-                HighlightAndRender(chosen_index, available_scripts) => {
-                    lock!(tui_clone)
-                        .highlight_and_render(&chosen_index, &available_scripts)
-                        .expect("Failed to write to stdout.");
-                }
-                // Show which script is erroring
-                ErrorInScript(info, err) => {
-                    lock!(tui_clone)
-                        .show_error(&info)
-                        .expect("Failed to write to stdout.");
-                    eprintln!("{}", err);
+    let _tui_thread = std::thread::spawn(move || -> Result<()> {
+        loop {
+            use MainToTuiMessage::*;
+            if let Ok(message) = from_main.recv() {
+                match message {
+                    // Greetings
+                    Intro => {
+                        lock!(tui_clone).intro()?;
+                    }
+                    // List available scripts
+                    ListScripts(index, file_name) => {
+                        lock!(tui_clone).elements_to_choose(&index, &file_name)?;
+                    }
+                    // Instruct user to choose
+                    WaitForChoice => {
+                        lock!(tui_clone).wait_for_choice()?;
+                    }
+                    // Ignore invalid choices
+                    IgnoreChoice => {
+                        lock!(tui_clone).ignore_choice()?;
+                    }
+                    // Clear screen
+                    Clear => lock!(tui_clone).clear()?,
+                    // Highlight choice and list scripts again
+                    HighlightAndRender(chosen_index, available_scripts) => {
+                        lock!(tui_clone).highlight_and_render(&chosen_index, &available_scripts)?;
+                    }
+                    // Show which script is erroring
+                    ErrorInScript(info, err) => {
+                        lock!(tui_clone).show_error(&info, &err)?;
+                    }
                 }
             }
         }
@@ -171,8 +149,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             if let Some(path) = matches.value_of("home") {
                 PathBuf::from(path)
             } else {
-                lock!(tui).no_home()?;
-                std::process::exit(Exit::Unavailable as i32);
+                lock!(tui).clear_lines(1)?;
+                bail!("{} {}", BULB, "\"mep\" couldn't determine the location of your home directory, to help it please run it with \"--home <absolute-path-to-your-home-directory>\"".blue());
             }
         }
     };
@@ -188,7 +166,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     if matches.is_present("clean") {
         fs::remove_dir_all(scripts_folder_path_str)?;
         lock!(tui).removed_scripts_folder()?;
-        std::process::exit(Exit::Success as i32);
+        // Exit successfully
+        return Ok(());
     }
 
     if matches.is_present("reset") {
@@ -256,53 +235,56 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // "~/.mep" folder is empty
     if available_scripts.is_empty() {
-        lock!(tui).empty_scripts_folder()?;
-        std::process::exit(Exit::Unavailable as i32);
+        lock!(tui).clear_lines(1)?;
+        bail!(
+            "{} {}",
+            BULB,
+            "There are no event processor scripts found in \"~/.mep\". Maybe put a couple?".blue()
+        );
     }
 
     // Start a watcher for "~/.mep" folder in its own thread.
     let (to_main, from_watcher) = channel::<WatcherToMainMessage>();
-    let _watcher_thread =
-        std::thread::spawn(move || -> Result<(), Box<dyn Error + Send + Sync>> {
-            loop {
-                let (sender, receiver) = channel();
-                let mut watcher = watcher(sender, Duration::from_secs(1))?;
-                let mut watcher_path = home.clone();
-                watcher_path.push(SCRIPTS_FOLDER_NAME);
-                watcher.watch(
-                    watcher_path.to_str().expect("Failed to convert "),
-                    RecursiveMode::Recursive,
-                )?;
+    let _watcher_thread = std::thread::spawn(move || -> Result<()> {
+        loop {
+            let (sender, receiver) = channel();
+            let mut watcher = watcher(sender, Duration::from_secs(1))?;
+            let mut watcher_path = home.clone();
+            watcher_path.push(SCRIPTS_FOLDER_NAME);
+            watcher.watch(
+                watcher_path.to_str().expect("..."),
+                RecursiveMode::Recursive,
+            )?;
 
-                if let Ok(event) = receiver.recv() {
-                    match event {
-                        // TODO: Sort out which events to respond
-                        DebouncedEvent::Write(path) | DebouncedEvent::NoticeWrite(path) => {
-                            if let Some(extension) = path.extension() {
-                                match extension.to_str() {
-                                    Some(extension) if "koto" == extension => {
-                                        // It is safe to unwrap here in my opinion because the receiver is the main thread.
-                                        to_main.send(WatcherToMainMessage::Change(path))?;
-                                    }
-                                    _ => {
-                                        // Ignore files other than koto scripts
-                                    }
+            if let Ok(event) = receiver.recv() {
+                match event {
+                    // TODO: Sort out which events to respond
+                    DebouncedEvent::Write(path) | DebouncedEvent::NoticeWrite(path) => {
+                        if let Some(extension) = path.extension() {
+                            match extension.to_str() {
+                                Some(extension) if "koto" == extension => {
+                                    // It is safe to unwrap here in my opinion because the receiver is the main thread.
+                                    to_main.send(WatcherToMainMessage::Change(path))?;
+                                }
+                                _ => {
+                                    // Ignore files other than koto scripts
                                 }
                             }
                         }
-                        DebouncedEvent::NoticeRemove(_)
-                        | DebouncedEvent::Create(_)
-                        | DebouncedEvent::Chmod(_)
-                        | DebouncedEvent::Remove(_)
-                        | DebouncedEvent::Rename(..)
-                        | DebouncedEvent::Rescan
-                        | DebouncedEvent::Error(..) => {
-                            // Ignore other events
-                        }
+                    }
+                    DebouncedEvent::NoticeRemove(_)
+                    | DebouncedEvent::Create(_)
+                    | DebouncedEvent::Chmod(_)
+                    | DebouncedEvent::Remove(_)
+                    | DebouncedEvent::Rename(..)
+                    | DebouncedEvent::Rescan
+                    | DebouncedEvent::Error(..) => {
+                        // Ignore other events
                     }
                 }
             }
-        });
+        }
+    });
 
     let mut choice = String::new();
     let mut chosen_idx: usize;
@@ -361,7 +343,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         None => "mep_out",
     };
 
-    let mep_out_port = Arc::new(Mutex::new(mep_out.create_virtual(mep_output_port_name)?));
+    let mep_out_port = Arc::new(Mutex::new(
+        mep_out
+            .create_virtual(mep_output_port_name)
+            .map_err(|err| {
+                anyhow!(
+                    "Couldn't create virtual midi output port named {}.\nError: {:?}",
+                    mep_output_port_name,
+                    err
+                )
+            })?,
+    ));
 
     // Init "koto_midi" library
     let mut midi_module = koto_midi::make_module();
@@ -389,9 +381,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                         runtime_error!(send_error_message)
                     }
                 })
-                .collect::<std::result::Result<Vec<u8>, RuntimeError>>();
+                .collect::<Result<Vec<u8>, RuntimeError>>();
             let _result: Result<_, RuntimeError> =
                 // `&msg.unwrap()` will always succeed.
+                #[allow(clippy::unwrap_used)]
                 match lock!(mep_out_port).send(&msg.unwrap()[..]) {
                     Ok(_) => Ok(()),
                     Err(e) => {
@@ -405,19 +398,28 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Make the handler call "midi.listen" function
     let (midi_in_to_main, from_midi_in) = channel::<Vec<u8>>();
-    let _mep_in_port = mep_in.create_virtual(
-        mep_input_port_name,
-        move |_stamp, message, _| {
-            let msg: Vec<u8> = message.iter().copied().collect();
-            match midi_in_to_main.send(msg) {
-                Ok(_) => {}
-                Err(e) => {
-                    eprintln!("{}", e);
+    let _mep_in_port = mep_in
+        .create_virtual(
+            mep_input_port_name,
+            move |_stamp, message, _| {
+                let msg: Vec<u8> = message.iter().copied().collect();
+                match midi_in_to_main.send(msg) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        // TODO: Give tui the job to display this error.
+                        println!("{}", err);
+                    }
                 }
-            }
-        },
-        (),
-    )?;
+            },
+            (),
+        )
+        .map_err(|err| {
+            anyhow!(
+                "Couldn't create virtual midi input port named {}.\nError: {:?}",
+                mep_input_port_name,
+                err
+            )
+        })?;
 
     // Add "koto_midi", "random" and other custom extensions to script runtime prelude.
     let mut prelude = runtime.prelude();
@@ -548,24 +550,22 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
             }
-            // TODO: Convert this to an error
-            Err(TryRecvError::Disconnected) => panic!("Channel disconnected"),
+            // TODO: Maybe join the thread? Currently erroring and terminating.
+            Err(TryRecvError::Disconnected) => bail!("stdin channel disconnected!"),
         }
     }
 }
 
 fn spawn_stdin_channel() -> Receiver<String> {
     let (stdin_to_main, from_stdin) = channel::<String>();
-    std::thread::spawn(
-        move || -> Result<Receiver<String>, Box<dyn Error + Send + Sync>> {
-            loop {
-                let mut choice = String::new();
-                if let Ok(_) = stdin().read_line(&mut choice) {
-                    stdin_to_main.send(choice)?;
-                }
+    std::thread::spawn(move || -> Result<Receiver<String>> {
+        loop {
+            let mut choice = String::new();
+            if stdin().read_line(&mut choice).is_ok() {
+                stdin_to_main.send(choice)?;
             }
-        },
-    );
+        }
+    });
     from_stdin
 }
 fn try_compile(
@@ -574,7 +574,7 @@ fn try_compile(
     chosen_script: &str,
     chosen_script_path: String,
     runtime: &mut Koto,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<()> {
     match runtime.compile(chosen_script) {
         Ok(chunk) => match runtime.run_chunk(chunk) {
             Ok(_) => Ok(()),
@@ -650,12 +650,16 @@ fn try_compile(
     }
 }
 
+fn get_scripts_folder_path(home: &str) -> PathBuf {
+    let mut scripts_folder_path = PathBuf::new();
+    scripts_folder_path.push(&home);
+    scripts_folder_path.push(SCRIPTS_FOLDER_NAME);
+    scripts_folder_path
+}
+
 // Borrowed from,
 // https://stackoverflow.com/questions/26958489/how-to-copy-a-folder-recursively-in-rust
-pub fn copy_directory_contents<U: AsRef<Path>, V: AsRef<Path>>(
-    from: U,
-    to: V,
-) -> Result<(), std::io::Error> {
+pub fn copy_directory_contents<U: AsRef<Path>, V: AsRef<Path>>(from: U, to: V) -> Result<()> {
     let mut stack = vec![PathBuf::from(from.as_ref())];
     let output_root = PathBuf::from(to.as_ref());
     let input_root = PathBuf::from(from.as_ref()).components().count();
@@ -691,7 +695,8 @@ pub fn copy_directory_contents<U: AsRef<Path>, V: AsRef<Path>>(
                         fs::copy(&path, &dest_path)?;
                     }
                     None => {
-                        eprintln!("failed: {:?}", path);
+                        // TODO: Add it to MepError maybe?
+                        return Err(anyhow!("failed: {:?}", path));
                     }
                 }
             }
