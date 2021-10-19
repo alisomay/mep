@@ -1,14 +1,16 @@
-// Restrict
-#![warn(clippy::all, clippy::pedantic, clippy::restriction)]
-// Allow
+#![warn(
+    clippy::all,
+    clippy::pedantic,
+    clippy::restriction,
+    clippy::nursery,
+    clippy::cargo
+)]
+#![allow(clippy::multiple_crate_versions, clippy::cargo_common_metadata)]
 #![allow(
     clippy::blanket_clippy_restriction_lints,
-    clippy::float_arithmetic,
     clippy::implicit_return,
-    clippy::needless_return,
     clippy::missing_docs_in_private_items,
     clippy::too_many_lines,
-    clippy::panic_in_result_fn,
     clippy::enum_glob_use,
     clippy::indexing_slicing,
     clippy::wildcard_enum_match_arm,
@@ -40,7 +42,8 @@ use midir::{
     MidiInput, MidiOutput,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+// TODO: Use and make use of Context
+use anyhow::{anyhow, bail, Result};
 use clap::{App, Arg};
 use crossterm::style::Stylize;
 
@@ -134,8 +137,8 @@ fn main() -> Result<()> {
                         lock!(tui_clone).highlight_and_render(&chosen_index, &available_scripts)?;
                     }
                     // Show which script is erroring
-                    ErrorInScript(info, err) => {
-                        lock!(tui_clone).show_error(&info, &err)?;
+                    ErrorInScript(path_to_script, err) => {
+                        lock!(tui_clone).show_error(&path_to_script, &err)?;
                     }
                 }
             }
@@ -155,49 +158,36 @@ fn main() -> Result<()> {
         }
     };
 
-    let scripts_folder_path = get_scripts_folder_path(
-        home.to_str()
-            .expect("Tried to convert invalid unicode string."),
-    );
-    let scripts_folder_path_str = scripts_folder_path
-        .to_str()
-        .expect("Tried to convert invalid unicode string.");
+    let scripts_folder_path = get_scripts_folder_path(&home.to_string_lossy());
 
     if matches.is_present("clean") {
-        fs::remove_dir_all(scripts_folder_path_str)?;
+        fs::remove_dir_all(scripts_folder_path)?;
         lock!(tui).removed_scripts_folder()?;
         // Exit successfully
         return Ok(());
     }
 
     if matches.is_present("reset") {
-        fs::remove_dir_all(scripts_folder_path_str)?;
+        fs::remove_dir_all(&scripts_folder_path)?;
         lock!(tui).reset_scripts_folder()?;
 
-        let mut examples_path = PathBuf::new();
-        examples_path.push(env!("CARGO_MANIFEST_DIR"));
+        let mut examples_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         examples_path.push("..");
         examples_path.push("example_scripts");
 
-        copy_directory_contents(
-            examples_path
-                .to_str()
-                .expect("Tried to convert invalid unicode string."),
-            scripts_folder_path_str,
-        )?;
+        copy_directory_contents(examples_path, &scripts_folder_path)?;
     }
 
-    if !Path::new(scripts_folder_path_str).exists() {
+    if !scripts_folder_path.exists() {
         lock!(tui).scripts_folder_not_found()?;
 
-        let mut examples_path = PathBuf::new();
-        examples_path.push(env!("CARGO_MANIFEST_DIR"));
+        let mut examples_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         examples_path.push("..");
         examples_path.push("example_scripts");
 
         copy_directory_contents(
             &format!("{}", examples_path.display()),
-            scripts_folder_path_str,
+            &scripts_folder_path,
         )?;
     }
 
@@ -216,8 +206,9 @@ fn main() -> Result<()> {
                     if "koto" == extension {
                         to_tui.send(MainToTuiMessage::ListScripts(
                             index.to_string(),
-                            // This will always succeed.
-                            format!("{:?}", path_buf.file_name().unwrap()),
+                            // This unwrap will always succeed because of the previous checks.
+                            #[allow(clippy::unwrap_used)]
+                            path_buf.file_name().unwrap().to_string_lossy().into(),
                         ))?;
                         let full_path = format!("{}", path_buf.display());
                         available_scripts.push(full_path);
@@ -251,10 +242,7 @@ fn main() -> Result<()> {
             let mut watcher = watcher(sender, Duration::from_secs(1))?;
             let mut watcher_path = home.clone();
             watcher_path.push(SCRIPTS_FOLDER_NAME);
-            watcher.watch(
-                watcher_path.to_str().expect("..."),
-                RecursiveMode::Recursive,
-            )?;
+            watcher.watch(watcher_path, RecursiveMode::Recursive)?;
 
             if let Ok(event) = receiver.recv() {
                 match event {
@@ -520,12 +508,8 @@ fn main() -> Result<()> {
             Err(TryRecvError::Empty) => {
                 if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.try_recv() {
                     loop {
-                        let chosen_script_path = path
-                            .to_str()
-                            .expect("Tried to convert invalid unicode string.")
-                            .to_string();
-                        let chosen_script = fs::read_to_string(&chosen_script_path)
-                            .expect("Couldn't read chosen script.");
+                        let chosen_script_path = path.to_string_lossy().into();
+                        let chosen_script = fs::read_to_string(&chosen_script_path)?;
                         match try_compile(
                             &to_tui,
                             &from_watcher,
@@ -588,10 +572,7 @@ fn try_compile(
                 loop {
                     if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
                         // A fix attempt had been made.
-                        let chosen_script_path = path
-                            .to_str()
-                            .expect("Tried to convert invalid unicode string.")
-                            .to_string();
+                        let chosen_script_path = path.to_string_lossy().into();
                         let chosen_script = fs::read_to_string(&chosen_script_path)?;
                         match try_compile(
                             to_tui,
@@ -623,10 +604,7 @@ fn try_compile(
             loop {
                 if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
                     // A fix attempt had been made.
-                    let chosen_script_path = path
-                        .to_str()
-                        .expect("Tried to convert invalid unicode string.")
-                        .to_string();
+                    let chosen_script_path = path.to_string_lossy().into();
                     let chosen_script = fs::read_to_string(&chosen_script_path)?;
                     match try_compile(
                         to_tui,

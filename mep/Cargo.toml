@@ -4,10 +4,16 @@ version = "0.0.1"
 authors = ["alisomay <alisomay@runbox.com>"]
 edition = "2021"
 license = "MIT"
+license-file = "../LICENCE"
 description = "A scriptable MIDI event processor."
 homepage = "https://github.com/alisomay/mep"
 repository = "https://github.com/alisomay/mep"
-keywords = ["midi", "event processor", "command line"]
+documentation = "https://github.com/alisomay/mep/blob/main/README.md"
+readme = "../README.md"
+keywords = ["midi", "event processor", "command line", "mep"]
+categories = ["midi", "audio", "music"]
+# exclude — Files to exclude when publishing.
+# include — Files to include when publishing.
 
 [dependencies]
 clap = "2.33.3"
