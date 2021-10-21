@@ -60,15 +60,6 @@ macro_rules! lock {
     };
 }
 
-enum MainToTuiMessage {
-    Intro,
-    ListScripts(String, String),
-    WaitForChoice,
-    IgnoreChoice,
-    HighlightAndRender(String, Vec<String>),
-    ErrorInScript(String, String),
-    Clear,
-}
 enum WatcherToMainMessage {
     Change(PathBuf),
 }
@@ -106,47 +97,7 @@ fn main() -> Result<()> {
         )
         .get_matches();
 
-    // Initialize terminal ui (tui)
-    let tui = Arc::new(Mutex::new(Tui::new()));
-    let (to_tui, from_main) = channel::<MainToTuiMessage>();
-    let tui_clone = Arc::clone(&tui);
-
-    // Start the listener for terminal ui (tui)
-    let _tui_thread = std::thread::spawn(move || -> Result<()> {
-        loop {
-            use MainToTuiMessage::*;
-            if let Ok(message) = from_main.recv() {
-                match message {
-                    // Greetings
-                    Intro => {
-                        lock!(tui_clone).intro()?;
-                    }
-                    // List available scripts
-                    ListScripts(index, file_name) => {
-                        lock!(tui_clone).elements_to_choose(&index, &file_name)?;
-                    }
-                    // Instruct user to choose
-                    WaitForChoice => {
-                        lock!(tui_clone).wait_for_choice()?;
-                    }
-                    // Ignore invalid choices
-                    IgnoreChoice => {
-                        lock!(tui_clone).ignore_choice()?;
-                    }
-                    // Clear screen
-                    Clear => lock!(tui_clone).clear()?,
-                    // Highlight choice and list scripts again
-                    HighlightAndRender(chosen_index, available_scripts) => {
-                        lock!(tui_clone).highlight_and_render(&chosen_index, &available_scripts)?;
-                    }
-                    // Show which script is erroring
-                    ErrorInScript(path_to_script, err) => {
-                        lock!(tui_clone).show_error(&path_to_script, &err)?;
-                    }
-                }
-            }
-        }
-    });
+    let tui = Tui::new();
 
     // Try to discover user's home directory
     let home = match home_dir() {
@@ -155,7 +106,7 @@ fn main() -> Result<()> {
             if let Some(path) = matches.value_of("home") {
                 PathBuf::from(path)
             } else {
-                lock!(tui).clear_lines(1)?;
+                tui.clear_lines(1)?;
                 bail!("{} {}", BULB, "\"mep\" couldn't determine the location of your home directory, to help it please run it with \"--home <absolute-path-to-your-home-directory>\"".blue());
             }
         }
@@ -165,14 +116,14 @@ fn main() -> Result<()> {
 
     if matches.is_present("clean") {
         fs::remove_dir_all(scripts_folder_path)?;
-        lock!(tui).removed_scripts_folder()?;
+        tui.removed_scripts_folder()?;
         // Exit successfully
         return Ok(());
     }
 
     if matches.is_present("reset") {
         fs::remove_dir_all(&scripts_folder_path)?;
-        lock!(tui).reset_scripts_folder()?;
+        tui.reset_scripts_folder()?;
 
         let mut examples_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         examples_path.push("..");
@@ -182,7 +133,7 @@ fn main() -> Result<()> {
     }
 
     if !scripts_folder_path.exists() {
-        lock!(tui).scripts_folder_not_found()?;
+        tui.scripts_folder_not_found()?;
 
         let mut examples_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         examples_path.push("..");
@@ -197,22 +148,16 @@ fn main() -> Result<()> {
     let script_paths = fs::read_dir(&scripts_folder_path)?;
     let mut available_scripts = vec![];
 
-    to_tui.send(MainToTuiMessage::Clear)?;
-    to_tui.send(MainToTuiMessage::Intro)?;
+    tui.clear()?;
+    tui.intro()?;
 
     // List and collect all scripts which has a ".koto" extension.
-    for (index, path) in script_paths.enumerate() {
+    for path in script_paths {
         let path_buf = path?.path();
         match path_buf.extension() {
             Some(extension) => match extension.to_str() {
                 Some(extension) => {
                     if "koto" == extension {
-                        to_tui.send(MainToTuiMessage::ListScripts(
-                            index.to_string(),
-                            // This unwrap will always succeed because of the previous checks.
-                            #[allow(clippy::unwrap_used)]
-                            path_buf.file_name().unwrap().to_string_lossy().into(),
-                        ))?;
                         let full_path = format!("{}", path_buf.display());
                         available_scripts.push(full_path);
                     }
@@ -229,13 +174,15 @@ fn main() -> Result<()> {
 
     // "~/.mep" folder is empty
     if available_scripts.is_empty() {
-        lock!(tui).clear_lines(1)?;
+        tui.clear_lines(1)?;
         bail!(
             "{} {}",
             BULB,
             "There are no event processor scripts found in \"~/.mep\". Maybe put a couple?".blue()
         );
     }
+
+    tui.list_scripts(&available_scripts)?;
 
     // Start a watcher for "~/.mep" folder in its own thread.
     let (to_main, from_watcher) = channel::<WatcherToMainMessage>();
@@ -281,7 +228,6 @@ fn main() -> Result<()> {
     // At this point we know that "available_scripts" is greater than 0.
     #[allow(clippy::integer_arithmetic)]
     let max_idx = available_scripts.len() - 1;
-    to_tui.send(MainToTuiMessage::WaitForChoice)?;
 
     loop {
         // Get user input
@@ -291,13 +237,13 @@ fn main() -> Result<()> {
         } else {
             // User entered invalid value or negative value, try again
             choice.clear();
-            to_tui.send(MainToTuiMessage::IgnoreChoice)?;
+            tui.ignore_choice()?;
             continue;
         };
         if chosen_index_checked > max_idx {
             // User entered index out of positive bounds, try again
             choice.clear();
-            to_tui.send(MainToTuiMessage::IgnoreChoice)?;
+            tui.ignore_choice()?;
             continue;
         }
         break;
@@ -395,17 +341,14 @@ fn main() -> Result<()> {
 
     // Tries to compile the chosen script with dynamic error handling.
     try_compile(
-        &to_tui,
+        &tui,
         &from_watcher,
         &chosen_script,
         chosen_script_path.clone(),
         &mut runtime,
     )?;
 
-    to_tui.send(MainToTuiMessage::HighlightAndRender(
-        chosen_index_checked.to_string(),
-        available_scripts.clone(),
-    ))?;
+    tui.highlight_and_render(&chosen_index_checked.to_string(), &available_scripts)?;
 
     runtime.run()?;
 
@@ -427,17 +370,15 @@ fn main() -> Result<()> {
                 match call_midi_listen_with(&message, &mut runtime) {
                     Ok(_) => break,
                     Err(err) => {
-                        to_tui.send(MainToTuiMessage::Clear)?;
-                        to_tui.send(MainToTuiMessage::ErrorInScript(
-                            chosen_script_path.clone(),
-                            err.to_string(),
-                        ))?;
+                        tui.clear()?;
+                        tui.show_error(&chosen_script_path, &err.to_string())?;
+
                         if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
                             loop {
                                 let chosen_script_path = path.to_string_lossy().into();
                                 let chosen_script = fs::read_to_string(&chosen_script_path)?;
                                 match try_compile(
-                                    &to_tui,
+                                    &tui,
                                     &from_watcher,
                                     &chosen_script,
                                     chosen_script_path,
@@ -457,10 +398,10 @@ fn main() -> Result<()> {
                             if call_midi_listen_with(&message, &mut runtime).is_ok() {
                                 // Script is fixed.
                                 // Re-render
-                                to_tui.send(MainToTuiMessage::HighlightAndRender(
-                                    chosen_index_checked.to_string(),
-                                    available_scripts.clone(),
-                                ))?;
+                                tui.highlight_and_render(
+                                    &chosen_index_checked.to_string(),
+                                    &available_scripts,
+                                )?;
                                 break;
                             }
 
@@ -479,13 +420,13 @@ fn main() -> Result<()> {
                 } else {
                     // User entered invalid value or negative value, try again
                     choice.clear();
-                    to_tui.send(MainToTuiMessage::IgnoreChoice)?;
+                    tui.ignore_choice()?;
                     continue;
                 };
                 if chosen_index_checked > max_idx {
                     // User entered index out of positive bounds, try again
                     choice.clear();
-                    to_tui.send(MainToTuiMessage::IgnoreChoice)?;
+                    tui.ignore_choice()?;
                     continue;
                 }
 
@@ -494,17 +435,14 @@ fn main() -> Result<()> {
 
                 // Tries to compile the chosen script with dynamic error handling.
                 try_compile(
-                    &to_tui,
+                    &tui,
                     &from_watcher,
                     &chosen_script,
                     chosen_script_path.clone(),
                     &mut runtime,
                 )?;
 
-                to_tui.send(MainToTuiMessage::HighlightAndRender(
-                    chosen_index_checked.to_string(),
-                    available_scripts.clone(),
-                ))?;
+                tui.highlight_and_render(&chosen_index_checked.to_string(), &available_scripts)?;
             }
             Err(TryRecvError::Empty) => {
                 if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.try_recv() {
@@ -512,7 +450,7 @@ fn main() -> Result<()> {
                         let chosen_script_path = path.to_string_lossy().into();
                         let chosen_script = fs::read_to_string(&chosen_script_path)?;
                         match try_compile(
-                            &to_tui,
+                            &tui,
                             &from_watcher,
                             &chosen_script,
                             chosen_script_path,
@@ -521,10 +459,10 @@ fn main() -> Result<()> {
                             Ok(_) => {
                                 // Script fixed or there was no problem.
                                 // Re-render
-                                to_tui.send(MainToTuiMessage::HighlightAndRender(
-                                    chosen_index_checked.to_string(),
-                                    available_scripts.clone(),
-                                ))?;
+                                tui.highlight_and_render(
+                                    &chosen_index_checked.to_string(),
+                                    &available_scripts,
+                                )?;
                                 break;
                             }
                             Err(_) => {
@@ -615,7 +553,7 @@ fn spawn_stdin_channel() -> Receiver<String> {
     from_stdin
 }
 fn try_compile(
-    to_tui: &std::sync::mpsc::Sender<MainToTuiMessage>,
+    tui: &Tui,
     from_watcher: &Receiver<WatcherToMainMessage>,
     chosen_script: &str,
     chosen_script_path: String,
@@ -626,18 +564,15 @@ fn try_compile(
             Ok(_) => Ok(()),
             Err(e) => {
                 // Runtime time error found in script.
-                to_tui.send(MainToTuiMessage::Clear)?;
-                to_tui.send(MainToTuiMessage::ErrorInScript(
-                    chosen_script_path,
-                    format!("{:?}", e),
-                ))?;
+                tui.clear()?;
+                tui.show_error(&chosen_script_path, &format!("{:?}", e))?;
                 loop {
                     if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
                         // A fix attempt had been made.
                         let chosen_script_path = path.to_string_lossy().into();
                         let chosen_script = fs::read_to_string(&chosen_script_path)?;
                         match try_compile(
-                            to_tui,
+                            tui,
                             from_watcher,
                             &chosen_script,
                             chosen_script_path,
@@ -658,18 +593,15 @@ fn try_compile(
         },
         Err(e) => {
             // Compile time error found in script.
-            to_tui.send(MainToTuiMessage::Clear)?;
-            to_tui.send(MainToTuiMessage::ErrorInScript(
-                chosen_script_path,
-                format!("{:?}", e),
-            ))?;
+            tui.clear()?;
+            tui.show_error(&chosen_script_path, &format!("{:?}", e))?;
             loop {
                 if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
                     // A fix attempt had been made.
                     let chosen_script_path = path.to_string_lossy().into();
                     let chosen_script = fs::read_to_string(&chosen_script_path)?;
                     match try_compile(
-                        to_tui,
+                        tui,
                         from_watcher,
                         &chosen_script,
                         chosen_script_path,

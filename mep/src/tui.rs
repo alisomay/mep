@@ -112,6 +112,33 @@ impl Tui {
 
         Ok(())
     }
+
+    pub fn list_scripts(&self, available_scripts: &[String]) -> Result<()> {
+        self.clear()?;
+        self.intro()?;
+        for (i, element) in available_scripts.iter().enumerate() {
+            self.write_line(i.to_string().as_str().yellow())?;
+
+            self.stdout.move_cursor_up(1)?;
+            self.stdout.move_cursor_right(3)?;
+            self.write_line(
+                format!(
+                    "{:?}",
+                    // Returns empty string if fails.
+                    PathBuf::from(element).file_name().unwrap_or_default()
+                )[..]
+                    .red(),
+            )?;
+        }
+
+        self.write_line(VALUE_ENTRY_LINE.green())?;
+        self.stdout.move_cursor_up(1)?;
+        #[allow(clippy::integer_arithmetic)]
+        self.stdout.move_cursor_right(VALUE_ENTRY_LINE.len() + 1)?;
+
+        Ok(())
+    }
+
     pub fn highlight_and_render(&self, index: &str, available_scripts: &[String]) -> Result<()> {
         let index_as_number: usize = index.parse()?;
         // self.stdout.clear_last_lines(available_scripts.len() + 1)?;
