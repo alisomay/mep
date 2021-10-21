@@ -64,9 +64,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bumpalo"
-version = "3.7.1"
+version = "3.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9df67f7bf9ef8498769f994239c45613ef0c5899415fb58e9add412d2c1a538"
+checksum = "8f1e260c3a9040a7c19a12468758f4c16f31a81a1fe087482be9570ec864bb6c"
 
 [[package]]
 name = "cc"
@@ -370,7 +370,7 @@ dependencies = [
 [[package]]
 name = "koto"
 version = "0.8.1"
-source = "git+https://github.com/koto-lang/koto?branch=main#553eda587293b1b4e97167a6823f78d3289e1015"
+source = "git+https://github.com/koto-lang/koto?branch=main#8ac8912185b5943b8a4128fb9a67cb478afcb866"
 dependencies = [
  "koto_bytecode",
  "koto_parser",
@@ -381,7 +381,7 @@ dependencies = [
 [[package]]
 name = "koto_bytecode"
 version = "0.8.1"
-source = "git+https://github.com/koto-lang/koto?branch=main#553eda587293b1b4e97167a6823f78d3289e1015"
+source = "git+https://github.com/koto-lang/koto?branch=main#8ac8912185b5943b8a4128fb9a67cb478afcb866"
 dependencies = [
  "koto_parser",
  "smallvec",
@@ -390,7 +390,7 @@ dependencies = [
 [[package]]
 name = "koto_lexer"
 version = "0.8.1"
-source = "git+https://github.com/koto-lang/koto?branch=main#553eda587293b1b4e97167a6823f78d3289e1015"
+source = "git+https://github.com/koto-lang/koto?branch=main#8ac8912185b5943b8a4128fb9a67cb478afcb866"
 dependencies = [
  "unicode-width",
  "unicode-xid",
@@ -399,7 +399,7 @@ dependencies = [
 [[package]]
 name = "koto_midi"
 version = "0.0.1"
-source = "git+https://github.com/alisomay/koto_midi?branch=main#2d12548051a5bb8a561b44428523d7fbc3e2cadd"
+source = "git+https://github.com/alisomay/koto_midi?branch=main#7cf4579bb8d3c6c8bd4f29d7b101b4d2e8501a08"
 dependencies = [
  "koto",
 ]
@@ -407,7 +407,7 @@ dependencies = [
 [[package]]
 name = "koto_parser"
 version = "0.8.1"
-source = "git+https://github.com/koto-lang/koto?branch=main#553eda587293b1b4e97167a6823f78d3289e1015"
+source = "git+https://github.com/koto-lang/koto?branch=main#8ac8912185b5943b8a4128fb9a67cb478afcb866"
 dependencies = [
  "koto_lexer",
 ]
@@ -425,7 +425,7 @@ dependencies = [
 [[package]]
 name = "koto_runtime"
 version = "0.8.1"
-source = "git+https://github.com/koto-lang/koto?branch=main#553eda587293b1b4e97167a6823f78d3289e1015"
+source = "git+https://github.com/koto-lang/koto?branch=main#8ac8912185b5943b8a4128fb9a67cb478afcb866"
 dependencies = [
  "downcast-rs",
  "indexmap",

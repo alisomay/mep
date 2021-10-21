@@ -418,8 +418,9 @@ fn main() -> Result<()> {
         // The problem is runtime creates a deadlock if we move the clone of it inside the closure..
         // Find a nice solution to it.
         // If we don't throttle this loop it consumes %100 CPU as expected.
-        // For now, 0.0005 secs should be more than enough for midi messages, around constant %6~ CPU.
-        std::thread::sleep(std::time::Duration::from_micros(500));
+        // For now, 0.00025 secs or low is enough for midi messages, average of %3.5~ CPU and 1ms round trip latency.
+        // This technique of hot reloading in midi receive errors has drawbacks listed in the upper part.
+        std::thread::sleep(std::time::Duration::from_micros(250));
         // Process midi received messages
         if let Ok(message) = from_midi_in.try_recv() {
             loop {
