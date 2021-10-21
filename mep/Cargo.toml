@@ -4,7 +4,6 @@ version = "0.0.1"
 authors = ["alisomay <alisomay@runbox.com>"]
 edition = "2021"
 license = "MIT"
-license-file = "../LICENCE"
 description = "A scriptable MIDI event processor."
 homepage = "https://github.com/alisomay/mep"
 repository = "https://github.com/alisomay/mep"

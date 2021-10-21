@@ -15,7 +15,9 @@
     clippy::indexing_slicing,
     clippy::wildcard_enum_match_arm,
     clippy::missing_errors_doc,
-    clippy::pattern_type_mismatch
+    clippy::pattern_type_mismatch,
+    clippy::shadow_unrelated,
+    clippy::shadow_reuse
 )]
 #![feature(stmt_expr_attributes)]
 
@@ -45,7 +47,7 @@ use midir::{
 
 // TODO: Use and make use of Context
 use anyhow::{anyhow, bail, Result};
-use clap::{App, Arg};
+use clap::{App, Arg, ArgMatches};
 use crossterm::style::Stylize;
 
 use notify::{watcher, DebouncedEvent, RecursiveMode, Watcher};
@@ -252,11 +254,10 @@ fn main() -> Result<()> {
                         if let Some(extension) = path.extension() {
                             match extension.to_str() {
                                 Some(extension) if "koto" == extension => {
-                                    // It is safe to unwrap here in my opinion because the receiver is the main thread.
                                     to_main.send(WatcherToMainMessage::Change(path))?;
                                 }
                                 _ => {
-                                    // Ignore files other than koto scripts
+                                    // Ignore all files other than koto scripts
                                 }
                             }
                         }
@@ -276,7 +277,7 @@ fn main() -> Result<()> {
     });
 
     let mut choice = String::new();
-    let mut chosen_idx: usize;
+    let mut chosen_index_checked: usize;
     // At this point we know that "available_scripts" is greater than 0.
     #[allow(clippy::integer_arithmetic)]
     let max_idx = available_scripts.len() - 1;
@@ -285,7 +286,7 @@ fn main() -> Result<()> {
     loop {
         // Get user input
         stdin().read_line(&mut choice)?;
-        chosen_idx = if let Ok(idx) = choice.trim().parse() {
+        chosen_index_checked = if let Ok(idx) = choice.trim().parse() {
             idx
         } else {
             // User entered invalid value or negative value, try again
@@ -293,7 +294,7 @@ fn main() -> Result<()> {
             to_tui.send(MainToTuiMessage::IgnoreChoice)?;
             continue;
         };
-        if chosen_idx > max_idx {
+        if chosen_index_checked > max_idx {
             // User entered index out of positive bounds, try again
             choice.clear();
             to_tui.send(MainToTuiMessage::IgnoreChoice)?;
@@ -302,46 +303,25 @@ fn main() -> Result<()> {
         break;
     }
 
-    let chosen_script = fs::read_to_string(&available_scripts[chosen_idx])?;
-    let chosen_script_path = available_scripts[chosen_idx].clone();
+    let chosen_script = fs::read_to_string(&available_scripts[chosen_index_checked])?;
+    let chosen_script_path = available_scripts[chosen_index_checked].clone();
 
     // Init script runtime
     let mut runtime = Koto::default();
-    runtime.set_script_path(Some(PathBuf::from(&available_scripts[chosen_idx])));
+    runtime.set_script_path(Some(PathBuf::from(
+        &available_scripts[chosen_index_checked],
+    )));
 
-    // Init midi ports
-    let mep_in = MidiInput::new("mep_input")?;
-    let mep_out = MidiOutput::new("mep_output")?;
-
-    let mut input_port_name = String::from("_in");
-    let mut output_port_name = String::from("_out");
-
-    let mep_input_port_name = match matches.value_of("port") {
-        Some(port_name) => {
-            input_port_name.insert_str(0, port_name);
-            &input_port_name
-        }
-        None => "mep_in",
-    };
-
-    let mep_output_port_name = match matches.value_of("port") {
-        Some(port_name) => {
-            output_port_name.insert_str(0, port_name);
-            &output_port_name
-        }
-        None => "mep_out",
-    };
+    let (mep_in, mep_out, input_port_name, output_port_name) = init_midi_io(&matches)?;
 
     let mep_out_port = Arc::new(Mutex::new(
-        mep_out
-            .create_virtual(mep_output_port_name)
-            .map_err(|err| {
-                anyhow!(
-                    "Couldn't create virtual midi output port named {}.\nError: {:?}",
-                    mep_output_port_name,
-                    err
-                )
-            })?,
+        mep_out.create_virtual(&output_port_name).map_err(|err| {
+            anyhow!(
+                "Couldn't create virtual midi output port named {}.\nError: {:?}",
+                output_port_name,
+                err
+            )
+        })?,
     ));
 
     // Init "koto_midi" library
@@ -363,10 +343,11 @@ fn main() -> Result<()> {
                         #[allow(clippy::as_conversions)]
                         // These are all fine because the value of `byte` is checked if it is in u8 range before.
                         ValueNumber::I64(byte) if (0..=255).contains(&byte) => Ok(byte as u8),
-
+                        // TODO: Do not fail with these errors but give user a notification to fix the script or not?
                         _ => runtime_error!(send_error_message),
                     },
                     _ => {
+                        // TODO: Do not fail with these errors but give user a notification to fix the script or not?
                         runtime_error!(send_error_message)
                     }
                 })
@@ -389,7 +370,7 @@ fn main() -> Result<()> {
     let (midi_in_to_main, from_midi_in) = channel::<Vec<u8>>();
     let _mep_in_port = mep_in
         .create_virtual(
-            mep_input_port_name,
+            &input_port_name,
             move |_stamp, message, _| {
                 let msg: Vec<u8> = message.iter().copied().collect();
                 #[allow(clippy::unwrap_used)]
@@ -402,7 +383,7 @@ fn main() -> Result<()> {
         .map_err(|err| {
             anyhow!(
                 "Couldn't create virtual midi input port named {}.\nError: {:?}",
-                mep_input_port_name,
+                input_port_name,
                 err
             )
         })?;
@@ -422,17 +403,23 @@ fn main() -> Result<()> {
     )?;
 
     to_tui.send(MainToTuiMessage::HighlightAndRender(
-        chosen_idx.to_string(),
+        chosen_index_checked.to_string(),
         available_scripts.clone(),
     ))?;
 
     runtime.run()?;
 
-    // A thread for non-blocking stdin
+    // A receiver for the thread for non-blocking stdin
     let stdin_channel = spawn_stdin_channel();
 
     // Main loop
     loop {
+        // TODO: Might be better to move this midi receiver to it's own thread. And propagate necessary messages there..
+        // The problem is runtime creates a deadlock if we move the clone of it inside the closure..
+        // Find a nice solution to it.
+        // If we don't throttle this loop it consumes %100 CPU as expected.
+        // For now, 0.0005 secs should be more than enough for midi messages, around constant %6~ CPU.
+        std::thread::sleep(std::time::Duration::from_micros(500));
         // Process midi received messages
         if let Ok(message) = from_midi_in.try_recv() {
             loop {
@@ -444,20 +431,40 @@ fn main() -> Result<()> {
                             chosen_script_path.clone(),
                             err.to_string(),
                         ))?;
-                        if let Ok(WatcherToMainMessage::Change(_)) = from_watcher.recv() {
+                        if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
+                            loop {
+                                let chosen_script_path = path.to_string_lossy().into();
+                                let chosen_script = fs::read_to_string(&chosen_script_path)?;
+                                match try_compile(
+                                    &to_tui,
+                                    &from_watcher,
+                                    &chosen_script,
+                                    chosen_script_path,
+                                    &mut runtime,
+                                ) {
+                                    Ok(_) => {
+                                        // Script fixed or there was no problem.
+                                        break;
+                                    }
+                                    Err(_) => {
+                                        // Script still has errors. Try one more time.
+                                        continue;
+                                    }
+                                }
+                            }
                             // A fix attempt had been made.
                             if call_midi_listen_with(&message, &mut runtime).is_ok() {
-                                // Script is fixed.                                                                        // Re-render
+                                // Script is fixed.
+                                // Re-render
                                 to_tui.send(MainToTuiMessage::HighlightAndRender(
-                                    chosen_idx.to_string(),
+                                    chosen_index_checked.to_string(),
                                     available_scripts.clone(),
                                 ))?;
                                 break;
-                            } 
-                            
+                            }
+
                             // Try one more time
                             continue;
-                            
                         }
                     }
                 }
@@ -466,7 +473,7 @@ fn main() -> Result<()> {
 
         match stdin_channel.try_recv() {
             Ok(mut choice) => {
-                chosen_idx = if let Ok(idx) = choice.trim().parse() {
+                chosen_index_checked = if let Ok(idx) = choice.trim().parse() {
                     idx
                 } else {
                     // User entered invalid value or negative value, try again
@@ -474,14 +481,14 @@ fn main() -> Result<()> {
                     to_tui.send(MainToTuiMessage::IgnoreChoice)?;
                     continue;
                 };
-                if chosen_idx > max_idx {
+                if chosen_index_checked > max_idx {
                     // User entered index out of positive bounds, try again
                     choice.clear();
                     to_tui.send(MainToTuiMessage::IgnoreChoice)?;
                     continue;
                 }
 
-                let chosen_script_path = available_scripts[chosen_idx].clone();
+                let chosen_script_path = available_scripts[chosen_index_checked].clone();
                 let chosen_script = fs::read_to_string(&chosen_script_path)?;
 
                 // Tries to compile the chosen script with dynamic error handling.
@@ -494,7 +501,7 @@ fn main() -> Result<()> {
                 )?;
 
                 to_tui.send(MainToTuiMessage::HighlightAndRender(
-                    chosen_idx.to_string(),
+                    chosen_index_checked.to_string(),
                     available_scripts.clone(),
                 ))?;
             }
@@ -514,7 +521,7 @@ fn main() -> Result<()> {
                                 // Script fixed or there was no problem.
                                 // Re-render
                                 to_tui.send(MainToTuiMessage::HighlightAndRender(
-                                    chosen_idx.to_string(),
+                                    chosen_index_checked.to_string(),
                                     available_scripts.clone(),
                                 ))?;
                                 break;
@@ -531,6 +538,15 @@ fn main() -> Result<()> {
             Err(TryRecvError::Disconnected) => bail!("stdin channel disconnected!"),
         }
     }
+
+    // unreachable
+}
+
+fn get_scripts_folder_path(home: &str) -> PathBuf {
+    let mut scripts_folder_path = PathBuf::new();
+    scripts_folder_path.push(&home);
+    scripts_folder_path.push(SCRIPTS_FOLDER_NAME);
+    scripts_folder_path
 }
 
 fn call_midi_listen_with(message: &[u8], runtime: &mut Koto) -> Result<()> {
@@ -545,12 +561,12 @@ fn call_midi_listen_with(message: &[u8], runtime: &mut Koto) -> Result<()> {
                         runtime.call_function(
                             message_listener.clone(),
                             &[Value::List(ValueList::from_slice(&message_values))],
-                        ).map(|_| ()).map_err(|err| anyhow!(err.to_string()))                          
+                        ).map(|_| ()).map_err(|err| anyhow!(err.to_string()))
                     }
                     _ => Err(anyhow!("\"midi.listen\" is defined but it is not a function")),
                 },
                 None => {
-                    Err(anyhow!("Try defining a function as \"midi.listen\""))
+                    Err(anyhow!("Try defining a function as \"midi.listen\". If not there please try importing \"midi\" on top of your script like \"import midi\"."))
                 }
             },
             _ => Err(anyhow!("\"midi\" has been found but it is not a map. Try importing \"midi\" on top of your script like \"import midi\". And do not use the same name further.")),
@@ -559,6 +575,31 @@ fn call_midi_listen_with(message: &[u8], runtime: &mut Koto) -> Result<()> {
     }
 }
 
+fn init_midi_io(
+    command_line_options: &ArgMatches,
+) -> Result<(MidiInput, MidiOutput, String, String)> {
+    let mep_in = MidiInput::new("mep_input")?;
+    let mep_out = MidiOutput::new("mep_output")?;
+
+    let mut input_port_name = String::from("_in");
+    let mut output_port_name = String::from("_out");
+
+    let mep_input_port_name = match command_line_options.value_of("port") {
+        Some(port_name) => {
+            input_port_name.insert_str(0, port_name);
+            input_port_name
+        }
+        None => "mep_in".to_owned(),
+    };
+    let mep_output_port_name = match command_line_options.value_of("port") {
+        Some(port_name) => {
+            output_port_name.insert_str(0, port_name);
+            output_port_name
+        }
+        None => "mep_out".to_owned(),
+    };
+    Ok((mep_in, mep_out, mep_input_port_name, mep_output_port_name))
+}
 
 fn spawn_stdin_channel() -> Receiver<String> {
     let (stdin_to_main, from_stdin) = channel::<String>();
@@ -646,13 +687,6 @@ fn try_compile(
             }
         }
     }
-}
-
-fn get_scripts_folder_path(home: &str) -> PathBuf {
-    let mut scripts_folder_path = PathBuf::new();
-    scripts_folder_path.push(&home);
-    scripts_folder_path.push(SCRIPTS_FOLDER_NAME);
-    scripts_folder_path
 }
 
 // Borrowed from,
