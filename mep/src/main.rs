@@ -54,12 +54,6 @@ use notify::{watcher, DebouncedEvent, RecursiveMode, Watcher};
 
 const SCRIPTS_FOLDER_NAME: &str = ".mep";
 
-macro_rules! lock {
-    ($i:ident) => {
-        $i.lock().unwrap()
-    };
-}
-
 enum WatcherToMainMessage {
     Change(PathBuf),
 }
@@ -316,7 +310,7 @@ fn main() -> Result<()> {
             if let Ok(msg) = msg {
                 // `&msg.unwrap()` will always succeed.
                 #[allow(clippy::unwrap_used)]
-                if let Err(e) = lock!(mep_out_port).send(&msg[..]) {
+                if let Err(e) = mep_out_port.lock().unwrap().send(&msg[..]) {
                     midi_send_error_to_main.send(format!("Error when trying to send midi message: {}", e.to_string()));
                 }
             }
@@ -355,7 +349,7 @@ fn main() -> Result<()> {
     prelude.add_value("random", koto_random::make_module());
 
     // Tries to compile the chosen script with dynamic error handling.
-    try_compile(
+    compile_run_block_until_valid(
         &tui,
         &from_watcher,
         &chosen_script,
@@ -393,9 +387,10 @@ fn main() -> Result<()> {
 
                         if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
                             loop {
+                                
                                 let chosen_script_path = path.to_string_lossy().into();
                                 let chosen_script = fs::read_to_string(&chosen_script_path)?;
-                                match try_compile(
+                                match compile_run_block_until_valid(
                                     &tui,
                                     &from_watcher,
                                     &chosen_script,
@@ -404,6 +399,10 @@ fn main() -> Result<()> {
                                 ) {
                                     Ok(_) => {
                                         // Script fixed or there was no problem.
+                                        tui.highlight_and_render(
+                                        &chosen_index_checked.to_string(),
+                                        &available_scripts,
+                                        )?;
                                         break;
                                     }
                                     Err(_) => {
@@ -412,19 +411,6 @@ fn main() -> Result<()> {
                                     }
                                 }
                             }
-                            // A fix attempt had been made.
-                            if call_midi_listen_with(&message, &mut runtime).is_ok() {
-                                // Script is fixed.
-                                // Re-render
-                                tui.highlight_and_render(
-                                    &chosen_index_checked.to_string(),
-                                    &available_scripts,
-                                )?;
-                                break;
-                            }
-
-                            // Try one more time
-                            continue;
                         }
                     }
                 }
@@ -438,7 +424,7 @@ fn main() -> Result<()> {
                 loop {
                     let chosen_script_path = path.to_string_lossy().into();
                     let chosen_script = fs::read_to_string(&chosen_script_path)?;
-                    match try_compile(
+                    match compile_run_block_until_valid(
                         &tui,
                         &from_watcher,
                         &chosen_script,
@@ -483,7 +469,7 @@ fn main() -> Result<()> {
                 let chosen_script = fs::read_to_string(&chosen_script_path)?;
 
                 // Tries to compile the chosen script with dynamic error handling.
-                try_compile(
+                compile_run_block_until_valid(
                     &tui,
                     &from_watcher,
                     &chosen_script,
@@ -498,7 +484,7 @@ fn main() -> Result<()> {
                     loop {
                         let chosen_script_path = path.to_string_lossy().into();
                         let chosen_script = fs::read_to_string(&chosen_script_path)?;
-                        match try_compile(
+                        match compile_run_block_until_valid(
                             &tui,
                             &from_watcher,
                             &chosen_script,
@@ -620,7 +606,7 @@ fn spawn_stdin_channel() -> Receiver<String> {
     });
     from_stdin
 }
-fn try_compile(
+fn compile_run_block_until_valid(
     tui: &Tui,
     from_watcher: &Receiver<WatcherToMainMessage>,
     chosen_script: &str,
@@ -639,7 +625,7 @@ fn try_compile(
                         // A fix attempt had been made.
                         let chosen_script_path = path.to_string_lossy().into();
                         let chosen_script = fs::read_to_string(&chosen_script_path)?;
-                        match try_compile(
+                        match compile_run_block_until_valid(
                             tui,
                             from_watcher,
                             &chosen_script,
@@ -668,7 +654,7 @@ fn try_compile(
                     // A fix attempt had been made.
                     let chosen_script_path = path.to_string_lossy().into();
                     let chosen_script = fs::read_to_string(&chosen_script_path)?;
-                    match try_compile(
+                    match compile_run_block_until_valid(
                         tui,
                         from_watcher,
                         &chosen_script,
