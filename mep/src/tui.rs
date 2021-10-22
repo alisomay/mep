@@ -83,22 +83,6 @@ impl Tui {
         )?;
         Ok(())
     }
-    pub fn elements_to_choose(&self, index: &str, name: &str) -> Result<()> {
-        self.write_line(index.yellow())?;
-        self.stdout.move_cursor_up(1)?;
-        self.stdout.move_cursor_right(3)?;
-        self.write_line(name.red())?;
-        Ok(())
-    }
-
-    pub fn wait_for_choice(&self) -> Result<()> {
-        // self.stdout.write_line("\n")?;
-        self.write_line(VALUE_ENTRY_LINE.green())?;
-        self.stdout.move_cursor_up(1)?;
-        #[allow(clippy::integer_arithmetic)]
-        self.stdout.move_cursor_right(VALUE_ENTRY_LINE.len() + 1)?;
-        Ok(())
-    }
 
     pub fn ignore_choice(&self) -> Result<()> {
         self.stdout.move_cursor_up(1)?;

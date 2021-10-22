@@ -37,8 +37,8 @@ use std::{
 use tui::{Tui, BULB};
 
 use koto::{
-    runtime::{runtime_error, RuntimeError, RuntimeErrorType, Value, ValueList, ValueNumber},
-    Koto, KotoError, KotoResult,
+    runtime::{RuntimeError, RuntimeErrorType, Value, ValueList, ValueNumber},
+    Koto
 };
 use midir::{
     os::unix::{VirtualInput, VirtualOutput},
@@ -197,7 +197,7 @@ fn main() -> Result<()> {
             if let Ok(event) = receiver.recv() {
                 match event {
                     // TODO: Sort out which events to respond
-                    DebouncedEvent::Write(path) | DebouncedEvent::NoticeWrite(path) => {
+                    DebouncedEvent::NoticeWrite(path) => {
                         if let Some(extension) = path.extension() {
                             match extension.to_str() {
                                 Some(extension) if "koto" == extension => {
@@ -208,15 +208,29 @@ fn main() -> Result<()> {
                                 }
                             }
                         }
+
                     }
-                    DebouncedEvent::NoticeRemove(_)
-                    | DebouncedEvent::Create(_)
-                    | DebouncedEvent::Chmod(_)
-                    | DebouncedEvent::Remove(_)
-                    | DebouncedEvent::Rename(..)
-                    | DebouncedEvent::Rescan
-                    | DebouncedEvent::Error(..) => {
+                    // TODO: Handle some of these possible events
+                    DebouncedEvent::Write(p) 
+                    | DebouncedEvent::NoticeRemove(p)
+                    | DebouncedEvent::Create(p)
+                    | DebouncedEvent::Chmod(p)
+                    | DebouncedEvent::Remove(p) => {
+                        // dbg!(p);
+                    }
+                    // TODO: Handle these possible events
+                    DebouncedEvent::Rename(p,pp) => {
+                        // dbg!(p);
+                    },
+                   
+                    
+                    | DebouncedEvent::Error(err, p) => {
+                        // dbg!(err);
                         // Ignore other events
+                    },
+                    // TODO: Probably not handle this
+                    DebouncedEvent::Rescan => {
+                        // dbg!("rs");
                     }
                 }
             }
@@ -272,46 +286,45 @@ fn main() -> Result<()> {
 
     // Init "koto_midi" library
     let mut midi_module = koto_midi::make_module();
-    let send_error_message = "send requires a list of bytes [0 - 255], 
-    you may still send malformed messages with this restriction. 
-    There will be no problem if you obey the protocol ;)";
+    let send_error_message = "Error calling \"midi.send\": Wrong argument type, please try to use a list of bytes (integers ranged to 0..=255) as an argument. Ex. [144, 65, 127]";
 
+    
     // Add "midi.send" function
-    midi_module.add_fn("send", move |vm, args| match vm.get_args(args) {
-        [Value::List(message)] => {
-            let msg = message
-                .data()
-                .iter()
-                .map(|value| match *value {
-                    Value::Number(num) => match num {
-                        #[allow(clippy::cast_sign_loss)]
-                        #[allow(clippy::cast_possible_truncation)]
-                        #[allow(clippy::as_conversions)]
-                        // These are all fine because the value of `byte` is checked if it is in u8 range before.
-                        ValueNumber::I64(byte) if (0..=255).contains(&byte) => Ok(byte as u8),
-                        // TODO: Do not fail with these errors but give user a notification to fix the script or not?
-                        // Send the last value through a channel with the error message, then loop it through the watcher.
-                        _ => runtime_error!(send_error_message),
-                    },
-                    _ => {
-                        // TODO: Do not fail with these errors but give user a notification to fix the script or not?
-                        // Send the last value through a channel with the error message, then loop it through the watcher.
-                        runtime_error!(send_error_message)
-                    }
-                })
-                .collect::<Result<Vec<u8>, RuntimeError>>();
-            let _result: Result<_, RuntimeError> =
+    let (midi_send_error_to_main, midi_send_errors) = std::sync::mpsc::sync_channel(256);
+    midi_module.add_fn("send", move |vm, args| if let [Value::List(message)] = vm.get_args(args) {
+        let msg: Result<Vec<u8>,_> = message
+            .data()
+            .iter()
+            .map(|value| if let Value::Number(num) = *value { match num {
+                #[allow(clippy::cast_sign_loss)]
+                #[allow(clippy::cast_possible_truncation)]
+                #[allow(clippy::as_conversions)]
+                // These are all fine because the value of `byte` is checked if it is in u8 range before.
+                ValueNumber::I64(byte) if (0..=255).contains(&byte) => Ok(byte as u8),
+                // TODO: Do not fail with these errors but give user a notification to fix the script or not?
+                // Send the last value through a channel with the error message, then loop it through the watcher.
+                _ => {
+                    midi_send_error_to_main.send(send_error_message.to_string()).expect("TODO");
+                    Err(())                          
+                }
+            } } else {
+                // TODO: Do not fail with these errors but give user a notification to fix the script or not?
+                // Send the last value through a channel with the error message, then loop it through the watcher.
+                midi_send_error_to_main.send(send_error_message.to_string()).expect("TODO");
+                Err(()) 
+            }).collect();
+            if let Ok(msg) = msg {
                 // `&msg.unwrap()` will always succeed.
                 #[allow(clippy::unwrap_used)]
-                match lock!(mep_out_port).send(&msg.unwrap()[..]) {
-                    Ok(_) => Ok(()),
-                    Err(e) => {
-                        runtime_error!(format!("Error when trying to send midi message: {}", e))
-                    }
-                };
-            Ok(Value::Empty)
-        }
-        _ => runtime_error!(send_error_message),
+                if let Err(e) = lock!(mep_out_port).send(&msg[..]) {
+                    midi_send_error_to_main.send(format!("Error when trying to send midi message: {}", e.to_string()));
+                }
+            }
+        Ok(Value::Empty)
+    } else {
+        midi_send_error_to_main.send(send_error_message.to_owned())
+        .map(|_| Value::Empty)
+        .map_err(|err| RuntimeError::from(err.to_string()))
     });
 
     // Make the handler call "midi.listen" function
@@ -411,6 +424,37 @@ fn main() -> Result<()> {
                             }
 
                             // Try one more time
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Ok(error_message) = midi_send_errors.try_recv() {
+            tui.clear()?;
+            tui.show_error(&chosen_script_path, &error_message)?;                        
+            if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
+                loop {
+                    let chosen_script_path = path.to_string_lossy().into();
+                    let chosen_script = fs::read_to_string(&chosen_script_path)?;
+                    match try_compile(
+                        &tui,
+                        &from_watcher,
+                        &chosen_script,
+                        chosen_script_path,
+                        &mut runtime,
+                    ) {
+                        Ok(_) => {
+                            // Script fixed or there was no problem.
+                            tui.highlight_and_render(
+                                    &chosen_index_checked.to_string(),
+                                    &available_scripts,
+                            )?;
+                            break;
+                        }
+                        Err(_) => {
+                            // Script still has errors. Try one more time.
                             continue;
                         }
                     }
