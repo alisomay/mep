@@ -87,6 +87,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "ch"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "koto 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "parking_lot",
+]
+
+[[package]]
 name = "clap"
 version = "2.33.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -370,12 +379,34 @@ dependencies = [
 [[package]]
 name = "koto"
 version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "afc9265e0748f7d28324cb0eae705bc6e30182d26339df63e15e861bfc06e453"
+dependencies = [
+ "koto_bytecode 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "koto_parser 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "koto_runtime 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "parking_lot",
+]
+
+[[package]]
+name = "koto"
+version = "0.8.1"
 source = "git+https://github.com/koto-lang/koto?branch=main#8ac8912185b5943b8a4128fb9a67cb478afcb866"
 dependencies = [
- "koto_bytecode",
- "koto_parser",
- "koto_runtime",
+ "koto_bytecode 0.8.1 (git+https://github.com/koto-lang/koto?branch=main)",
+ "koto_parser 0.8.1 (git+https://github.com/koto-lang/koto?branch=main)",
+ "koto_runtime 0.8.1 (git+https://github.com/koto-lang/koto?branch=main)",
  "parking_lot",
+]
+
+[[package]]
+name = "koto_bytecode"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8bdc520a3895a152adca97b1472989e122669431df3b3237e3959d60fcbdfb4"
+dependencies = [
+ "koto_parser 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "smallvec",
 ]
 
 [[package]]
@@ -383,8 +414,18 @@ name = "koto_bytecode"
 version = "0.8.1"
 source = "git+https://github.com/koto-lang/koto?branch=main#8ac8912185b5943b8a4128fb9a67cb478afcb866"
 dependencies = [
- "koto_parser",
+ "koto_parser 0.8.1 (git+https://github.com/koto-lang/koto?branch=main)",
  "smallvec",
+]
+
+[[package]]
+name = "koto_lexer"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6021b37d4892acd882cfb75857b31ca0c6efde21e3c55de0a6fa7af33cec6f8d"
+dependencies = [
+ "unicode-width",
+ "unicode-xid",
 ]
 
 [[package]]
@@ -401,7 +442,16 @@ name = "koto_midi"
 version = "0.0.1"
 source = "git+https://github.com/alisomay/koto_midi?branch=main#7cf4579bb8d3c6c8bd4f29d7b101b4d2e8501a08"
 dependencies = [
- "koto",
+ "koto 0.8.1 (git+https://github.com/koto-lang/koto?branch=main)",
+]
+
+[[package]]
+name = "koto_parser"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c529c56afbc034cda6e76c68f9dd8ef19187050e2403479dde67a348a61d65b"
+dependencies = [
+ "koto_lexer 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -409,17 +459,36 @@ name = "koto_parser"
 version = "0.8.1"
 source = "git+https://github.com/koto-lang/koto?branch=main#8ac8912185b5943b8a4128fb9a67cb478afcb866"
 dependencies = [
- "koto_lexer",
+ "koto_lexer 0.8.1 (git+https://github.com/koto-lang/koto?branch=main)",
 ]
 
 [[package]]
 name = "koto_random"
 version = "0.8.1"
 dependencies = [
- "koto",
+ "koto 0.8.1 (git+https://github.com/koto-lang/koto?branch=main)",
  "lazy_static",
  "rand",
  "rand_chacha",
+]
+
+[[package]]
+name = "koto_runtime"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fb5a5500a765818c16f2ab56eb9c2397ef161eefc0188fb103b965107d7780a"
+dependencies = [
+ "downcast-rs",
+ "indexmap",
+ "koto_bytecode 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "koto_lexer 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "koto_parser 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lazy_static",
+ "num_cpus",
+ "parking_lot",
+ "rustc-hash",
+ "smallvec",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -429,9 +498,9 @@ source = "git+https://github.com/koto-lang/koto?branch=main#8ac8912185b5943b8a41
 dependencies = [
  "downcast-rs",
  "indexmap",
- "koto_bytecode",
- "koto_lexer",
- "koto_parser",
+ "koto_bytecode 0.8.1 (git+https://github.com/koto-lang/koto?branch=main)",
+ "koto_lexer 0.8.1 (git+https://github.com/koto-lang/koto?branch=main)",
+ "koto_parser 0.8.1 (git+https://github.com/koto-lang/koto?branch=main)",
  "lazy_static",
  "num_cpus",
  "parking_lot",
@@ -491,7 +560,7 @@ dependencies = [
  "console",
  "crossterm",
  "dirs",
- "koto",
+ "koto 0.8.1 (git+https://github.com/koto-lang/koto?branch=main)",
  "koto_midi",
  "koto_random",
  "midir",

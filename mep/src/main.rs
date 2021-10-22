@@ -37,8 +37,8 @@ use std::{
 use tui::{Tui, BULB};
 
 use koto::{
-    runtime::{runtime_error, RuntimeError, Value, ValueList, ValueNumber},
-    Koto,
+    runtime::{runtime_error, RuntimeError, RuntimeErrorType, Value, ValueList, ValueNumber},
+    Koto, KotoError, KotoResult,
 };
 use midir::{
     os::unix::{VirtualInput, VirtualOutput},
@@ -290,10 +290,12 @@ fn main() -> Result<()> {
                         // These are all fine because the value of `byte` is checked if it is in u8 range before.
                         ValueNumber::I64(byte) if (0..=255).contains(&byte) => Ok(byte as u8),
                         // TODO: Do not fail with these errors but give user a notification to fix the script or not?
+                        // Send the last value through a channel with the error message, then loop it through the watcher.
                         _ => runtime_error!(send_error_message),
                     },
                     _ => {
                         // TODO: Do not fail with these errors but give user a notification to fix the script or not?
+                        // Send the last value through a channel with the error message, then loop it through the watcher.
                         runtime_error!(send_error_message)
                     }
                 })
@@ -371,7 +373,10 @@ fn main() -> Result<()> {
                     Ok(_) => break,
                     Err(err) => {
                         tui.clear()?;
-                        tui.show_error(&chosen_script_path, &err.to_string())?;
+                        // maybe downcast ref here
+                        if let RuntimeErrorType::StringError(error_message) = err.error {
+                            tui.show_error(&chosen_script_path, &error_message)?;
+                        }
 
                         if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
                             loop {
@@ -488,29 +493,48 @@ fn get_scripts_folder_path(home: &str) -> PathBuf {
     scripts_folder_path
 }
 
-fn call_midi_listen_with(message: &[u8], runtime: &mut Koto) -> Result<()> {
+fn call_midi_listen_with(message: &[u8], runtime: &mut Koto) -> Result<(), RuntimeError> {
     match runtime.prelude().data().get_with_string("midi") {
         Some(midi_module) => match midi_module {
             Value::Map(midi_module) => match midi_module.data().get_with_string("listen") {
                 Some(message_listener) => match message_listener {
                     Value::Function(_) => {
                         // Make a list of koto values from u8 slice.
-                        let message_values = message.iter().map(|byte| Value::Number(byte.into())).collect::<Vec<Value>>();
+                        let message_values = message
+                            .iter()
+                            .map(|byte| Value::Number(byte.into()))
+                            .collect::<Vec<Value>>();
                         // Call "midi.listen" function in script with the midi message.
-                        runtime.call_function(
-                            message_listener.clone(),
-                            &[Value::List(ValueList::from_slice(&message_values))],
-                        ).map(|_| ()).map_err(|err| anyhow!(err.to_string()))
+                        runtime
+                            .call_function(
+                                message_listener.clone(),
+                                &[Value::List(ValueList::from_slice(&message_values))],
+                            )
+                            .map(|_| ())
+                            .map_err(|err|  
+                                 RuntimeError::with_prefix(RuntimeError::from(format!("Calling \"midi.listen\" is failed, {}",err.to_string())),&"Error".magenta().to_string())
+                            )
                     }
-                    _ => Err(anyhow!("\"midi.listen\" is defined but it is not a function")),
+
+                    _ => Err(RuntimeError::with_prefix(
+                        RuntimeError::from("\"midi.listen\" is defined but it is not a function".to_owned()),
+                        &"Error".magenta().to_string(),
+                    )),
                 },
-                None => {
-                    Err(anyhow!("Try defining a function as \"midi.listen\". If not there please try importing \"midi\" on top of your script like \"import midi\"."))
-                }
+                None => Err(RuntimeError::with_prefix(
+                    RuntimeError::from("Try defining a function as \"midi.listen\". If not there please try importing \"midi\" on top of your script like \"import midi\".".to_owned()),
+                    &"Error".magenta().to_string(),
+                )),
             },
-            _ => Err(anyhow!("\"midi\" has been found but it is not a map. Try importing \"midi\" on top of your script like \"import midi\". And do not use the same name further.")),
+            _ => Err(RuntimeError::with_prefix(
+                RuntimeError::from("\"midi\" has been found but it is not a map. Try importing \"midi\" on top of your script like \"import midi\". And do not use the same name further.".to_owned()),
+                &"Error".magenta().to_string(),
+            )),
         },
-        None => Err(anyhow!("Try importing \"midi\" on top of your script like \"import midi\"")),
+        None => Err(RuntimeError::with_prefix(
+            RuntimeError::from("Try importing \"midi\" on top of your script like \"import midi\"".to_owned()),
+            &"Error".magenta().to_string(),
+        )),
     }
 }
 
@@ -562,10 +586,10 @@ fn try_compile(
     match runtime.compile(chosen_script) {
         Ok(chunk) => match runtime.run_chunk(chunk) {
             Ok(_) => Ok(()),
-            Err(e) => {
+            Err(err) => {
                 // Runtime time error found in script.
                 tui.clear()?;
-                tui.show_error(&chosen_script_path, &format!("{:?}", e))?;
+                tui.show_error(&chosen_script_path, &err.to_string())?;
                 loop {
                     if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
                         // A fix attempt had been made.
@@ -591,10 +615,10 @@ fn try_compile(
                 }
             }
         },
-        Err(e) => {
+        Err(err) => {
             // Compile time error found in script.
             tui.clear()?;
-            tui.show_error(&chosen_script_path, &format!("{:?}", e))?;
+            tui.show_error(&chosen_script_path, &err.to_string())?;
             loop {
                 if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
                     // A fix attempt had been made.

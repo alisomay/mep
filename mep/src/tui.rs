@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use console::Term;
-use crossterm::style::{StyledContent, Stylize};
+use crossterm::style::{Attribute, StyledContent, Stylize};
 
 use anyhow::Result;
 
@@ -55,11 +55,9 @@ impl Tui {
     pub fn show_error(&self, info: &str, err: &str) -> Result<()> {
         self.clear_lines(1)?;
         self.write_line(format!("{} There is an error in: {}", BULB, info)[..].magenta())?;
-        self.write_line(
-            "Either choose another one by entering a valid digit or fix your script.".blue(),
-        )?;
-        // TODO: Make it pretty? That is why I left the format there.
-        self.write_line(format!("{:?}", err)[..].white())?;
+        self.write_line("Please navigate to the \"~/.mep\" folder and fix your script.".blue())?;
+        self.write_line("".blue())?;
+        self.write_line(err.white().attribute(Attribute::Framed))?;
         Ok(())
     }
 
