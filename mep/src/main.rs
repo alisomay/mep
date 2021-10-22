@@ -380,38 +380,11 @@ fn main() -> Result<()> {
                     Ok(_) => break,
                     Err(err) => {
                         tui.clear()?;
-                        // maybe downcast ref here
+                        // TODO: maybe downcast ref here
                         if let RuntimeErrorType::StringError(error_message) = err.error {
                             tui.show_error(&chosen_script_path, &error_message)?;
                         }
-
-                        if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
-                            loop {
-                                
-                                let chosen_script_path = path.to_string_lossy().into();
-                                let chosen_script = fs::read_to_string(&chosen_script_path)?;
-                                match compile_run_block_until_valid(
-                                    &tui,
-                                    &from_watcher,
-                                    &chosen_script,
-                                    chosen_script_path,
-                                    &mut runtime,
-                                ) {
-                                    Ok(_) => {
-                                        // Script fixed or there was no problem.
-                                        tui.highlight_and_render(
-                                        &chosen_index_checked.to_string(),
-                                        &available_scripts,
-                                        )?;
-                                        break;
-                                    }
-                                    Err(_) => {
-                                        // Script still has errors. Try one more time.
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
+                        enter_debug_loop(&tui,&from_watcher, &mut runtime, chosen_index_checked, &available_scripts)?;
                     }
                 }
             }
@@ -420,32 +393,7 @@ fn main() -> Result<()> {
         if let Ok(error_message) = midi_send_errors.try_recv() {
             tui.clear()?;
             tui.show_error(&chosen_script_path, &error_message)?;                        
-            if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.recv() {
-                loop {
-                    let chosen_script_path = path.to_string_lossy().into();
-                    let chosen_script = fs::read_to_string(&chosen_script_path)?;
-                    match compile_run_block_until_valid(
-                        &tui,
-                        &from_watcher,
-                        &chosen_script,
-                        chosen_script_path,
-                        &mut runtime,
-                    ) {
-                        Ok(_) => {
-                            // Script fixed or there was no problem.
-                            tui.highlight_and_render(
-                                    &chosen_index_checked.to_string(),
-                                    &available_scripts,
-                            )?;
-                            break;
-                        }
-                        Err(_) => {
-                            // Script still has errors. Try one more time.
-                            continue;
-                        }
-                    }
-                }
-            }
+            enter_debug_loop(&tui,&from_watcher, &mut runtime, chosen_index_checked, &available_scripts)?;
         }
 
         match stdin_channel.try_recv() {
@@ -480,33 +428,7 @@ fn main() -> Result<()> {
                 tui.highlight_and_render(&chosen_index_checked.to_string(), &available_scripts)?;
             }
             Err(TryRecvError::Empty) => {
-                if let Ok(WatcherToMainMessage::Change(path)) = from_watcher.try_recv() {
-                    loop {
-                        let chosen_script_path = path.to_string_lossy().into();
-                        let chosen_script = fs::read_to_string(&chosen_script_path)?;
-                        match compile_run_block_until_valid(
-                            &tui,
-                            &from_watcher,
-                            &chosen_script,
-                            chosen_script_path,
-                            &mut runtime,
-                        ) {
-                            Ok(_) => {
-                                // Script fixed or there was no problem.
-                                // Re-render
-                                tui.highlight_and_render(
-                                    &chosen_index_checked.to_string(),
-                                    &available_scripts,
-                                )?;
-                                break;
-                            }
-                            Err(_) => {
-                                // Script still has errors. Try one more time.
-                                continue;
-                            }
-                        }
-                    }
-                }
+                enter_debug_loop(&tui,&from_watcher, &mut runtime, chosen_index_checked, &available_scripts)?;
             }
             // TODO: Maybe join the thread? Currently erroring and terminating.
             Err(TryRecvError::Disconnected) => bail!("stdin channel disconnected!"),
@@ -514,6 +436,27 @@ fn main() -> Result<()> {
     }
 
     // unreachable
+}
+
+fn enter_debug_loop(tui: &Tui, watcher_channel:&Receiver<WatcherToMainMessage>, runtime: &mut Koto, chosen_index:usize , available_scripts: &[String]) -> Result<()> {
+    if let Ok(WatcherToMainMessage::Change(path)) = watcher_channel.recv() {
+        let chosen_script_path = path.to_string_lossy().into();
+        let chosen_script = fs::read_to_string(&chosen_script_path)?;
+        if compile_run_block_until_valid(
+            tui,
+            watcher_channel,
+            &chosen_script,
+            chosen_script_path,
+            runtime,
+        ).is_ok() {   
+            // Script fixed or there was no problem.
+            tui.highlight_and_render(
+            &chosen_index.to_string(),
+            available_scripts,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn get_scripts_folder_path(home: &str) -> PathBuf {
