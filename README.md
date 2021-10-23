@@ -1,5 +1,7 @@
 # mep
 
+> _Quick navigation to the [API reference](./api.md)_
+
 ## Introduction
 
 **mep** is a scriptable midi event processor.
