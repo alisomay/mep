@@ -1,0 +1,6 @@
+# A boilerplate to start your event processing journey.
+
+import midi
+
+midi.listen = |message| 
+  ()

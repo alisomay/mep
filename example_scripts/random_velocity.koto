@@ -4,11 +4,18 @@
 import midi
 import random
 
-midi.listen = |message| 
+midi.random_velocity = {}
+midi.random_velocity.random_range = 127 
+
+midi.listen = |message, random_range| 
   message = midi.parse message
+
   match message.type
+    midi.types.control_change if message.note == 0 then
+      midi.random_velocity.random_range = message.value
+      midi.send message.pack()
     midi.types.note_on if message.velocity > 0 then
-      processed_msg = midi.message.note_on [message.note, (random.number() * 127).floor() + 1, message.channel]
+      processed_msg = midi.message.note_on [message.note, (random.number() * midi.random_velocity.random_range).floor() + 1, message.channel]
       midi.send processed_msg.pack()
 
 

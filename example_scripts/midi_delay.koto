@@ -1,0 +1,39 @@
+# A simple controllable midi delay example.
+
+import midi
+
+# feed_back_level 0..1
+# delay_time_ms 0..n
+midi.delay_parameters = { feed_back_level:0.80, delay_time:0.10 }
+
+midi.delay = |message|
+  # Keep the last velocity to incrementally reduce it over time.
+  last_velocity = message.velocity
+  loop
+    last_velocity = (last_velocity * midi.delay_parameters.feed_back_level).floor()
+    m = midi.message.note_on [message.note, last_velocity, message.channel]
+    midi.send m.pack()
+    # This would also influence feedback level
+    if last_velocity < 1
+      break
+    # Sleep for delay_time and repeat.
+    thread.sleep midi.delay_parameters.delay_time
+  # Silence the note after the delay finishes.
+  midi.send (midi.message.note_on [message.note, 0, message.channel]).pack()
+   
+midi.listen = |message|
+  message = midi.parse message
+  match message.type
+    midi.types.note_on if message.velocity > 0 then
+      # Spawn a thread for all "note on" messages so we can hear them concurrently.
+      voice = thread.create || 
+        midi.delay message
+    midi.types.control_change then
+      match message.note
+        # CC_0 controls the delay time
+        0 then 
+          # Lets say we have a ~200ms of delay, maximum 0.20 delay_time
+          midi.delay_parameters.delay_time = (message.value / 127 * 10) * 2 
+        # CC_1 controls the feedback level
+        1 then 
+          midi.delay_parameters.feed_back_level = message.value / 127

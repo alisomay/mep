@@ -727,9 +727,6 @@ fn compile_run_block_until_valid(
             }
         },
         Err(err) => {
-                               dbg!(&err);
-         
-                std::thread::sleep(Duration::from_millis(4000));
             // Compile time error found in script.
             tui.clear()?;
             tui.show_error(&context.chosen_script_path, &err.to_string())?;
