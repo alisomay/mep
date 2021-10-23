@@ -7,6 +7,8 @@
 )]
 #![allow(clippy::multiple_crate_versions, clippy::cargo_common_metadata)]
 #![allow(
+    clippy::integer_arithmetic,
+    clippy::float_arithmetic,
     clippy::blanket_clippy_restriction_lints,
     clippy::implicit_return,
     clippy::missing_docs_in_private_items,
@@ -16,14 +18,14 @@
     clippy::wildcard_enum_match_arm,
     clippy::missing_errors_doc,
     clippy::pattern_type_mismatch,
-    clippy::shadow_unrelated,
+    // clippy::shadow_unrelated,
     clippy::shadow_reuse
 )]
 #![feature(stmt_expr_attributes)]
 
 mod tui;
 use dirs::home_dir;
-use std::{cell::{RefCell, RefMut}, ffi::OsStr, fs, io::stdin, path::{Path, PathBuf}, sync::mpsc::channel, sync::{
+use std::{fs, io::stdin, path::{Path, PathBuf}, sync::mpsc::channel, sync::{
         mpsc::{Receiver, TryRecvError},
         Arc, Mutex,
     }, time::Duration};
@@ -223,8 +225,7 @@ fn main() -> Result<()> {
 
     let mut choice = String::new();
     let mut chosen_index_checked: usize;
-    // At this point we know that "available_scripts" is greater than 0.
-    #[allow(clippy::integer_arithmetic)]
+    // This operation is sound because, at this point we know that "available_scripts" is greater than 0.
     let max_idx = available_scripts.len() - 1;
 
     loop {
@@ -289,20 +290,21 @@ fn main() -> Result<()> {
                 _ => {
                     // `unwrap()` will always succeed channel receiver is in main.
                     #[allow(clippy::unwrap_used)]
-                    midi_send_error_to_main.send(send_error_message.to_string()).unwrap();
+                    midi_send_error_to_main.send(send_error_message.into()).unwrap();
                     Err(())
                 }
             } } else {
                 // `unwrap()` will always succeed succeed channel receiver is in main.
                 #[allow(clippy::unwrap_used)]
-                midi_send_error_to_main.send(send_error_message.to_string()).unwrap();
+                midi_send_error_to_main.send(send_error_message.into()).unwrap();
                 Err(()) 
             }).collect();
-            if let Ok(msg) = msg {
+            if let Ok(midi_message_to_send) = msg {
                 // `lock.unwrap()` will always succeed no one else locks it.
                 #[allow(clippy::unwrap_used)]
-                if let Err(e) = mep_out_port.lock().unwrap().send(&msg[..]) {
-                    midi_send_error_to_main.send(format!("Error when trying to send midi message: {}", e.to_string()));
+                if let Err(e) = mep_out_port.lock().unwrap().send(&midi_message_to_send[..]) {
+                    // `unwrap()` will always succeed succeed channel receiver is in main.
+                    midi_send_error_to_main.send(format!("Error when trying to send midi message: {}", e)).unwrap();
                 }
             }
         Ok(Value::Empty)
@@ -393,27 +395,25 @@ fn main() -> Result<()> {
         }
 
         match stdin_channel.try_recv() {
-            Ok(mut choice) => { 
-               
-                context.chosen_index_checked = if let Ok(idx) = choice.trim().parse() {
+            Ok(mut user_choice) => {        
+                context.chosen_index_checked = if let Ok(idx) = user_choice.trim().parse() {
                     idx
                 } else {
                     // User entered invalid value or negative value, try again
-                    choice.clear();
+                    user_choice.clear();
                     tui.ignore_choice()?;
                     continue;
                 };
                 if chosen_index_checked > max_idx {
                     // User entered index out of positive bounds, try again
-                    choice.clear();
+                    user_choice.clear();
                     tui.ignore_choice()?;
                     continue;
                 }
-
+                
                 context.chosen_script_path = context.available_scripts[context.chosen_index_checked].clone();
                 context.chosen_script = fs::read_to_string(&context.chosen_script_path)?;
-            
-    
+
                 // Tries to compile the chosen script with dynamic error handling.
                 compile_run_block_until_valid(
                     &tui,
@@ -439,7 +439,7 @@ fn main() -> Result<()> {
 }
 
 
-fn collect_available_scripts_to(vector_to_collect_to: &mut Vec<String>, scripts_folder_path: &PathBuf) -> Result<()> {
+fn collect_available_scripts_to(vector_to_collect_to: &mut Vec<String>, scripts_folder_path: &Path) -> Result<()> {
     let script_paths = fs::read_dir(&scripts_folder_path)?;
     // List and collect all scripts which has a ".koto" extension.
     for path in script_paths {
@@ -682,14 +682,9 @@ fn compile_run_block_until_valid(
     context: &mut Context,
     runtime: &mut Koto,
 ) -> Result<()> {
-                //    dbg!(&context);
-         
-                // std::thread::sleep(Duration::from_millis(4000));
     match runtime.compile(&context.chosen_script) {
         Ok(chunk) => match runtime.run_chunk(chunk) {
             Ok(_) => {
-                // dbg!("REALLY OK?");
-                // std::thread::sleep(Duration::from_millis(4000));
                 Ok(())
             },
             Err(err) => {
@@ -794,6 +789,5 @@ pub fn copy_directory_contents<U: AsRef<Path>, V: AsRef<Path>>(from: U, to: V) -
             }
         }
     }
-
     Ok(())
 }

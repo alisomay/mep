@@ -2,5 +2,4 @@
 members = [
   "mep",
   "koto_libraries/*",
-  "ch"
 ]
