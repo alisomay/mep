@@ -5,7 +5,9 @@ use crossterm::style::{Attribute, StyledContent, Stylize};
 
 use anyhow::Result;
 
-const VALUE_ENTRY_LINE: &str = "choose and then press \"enter\":";
+const VALUE_ENTRY_LINE: &str = "Please choose a script to run and start watching for changes.\nType a digit from the list and then press \"enter\":";
+const VALUE_ENTRY_LINE_LENGTH: usize =
+    "\nType a digit from the list and then press \"enter\":".len();
 pub const BULB: &str = "\u{1f4a1}";
 
 pub struct Tui {
@@ -89,8 +91,7 @@ impl Tui {
         self.stdout.clear_line()?;
         self.write_line(VALUE_ENTRY_LINE.green())?;
         self.stdout.move_cursor_up(1)?;
-        #[allow(clippy::integer_arithmetic)]
-        self.stdout.move_cursor_right(VALUE_ENTRY_LINE.len() + 1)?;
+        self.stdout.move_cursor_right(VALUE_ENTRY_LINE_LENGTH)?;
 
         Ok(())
     }
@@ -115,8 +116,7 @@ impl Tui {
 
         self.write_line(VALUE_ENTRY_LINE.green())?;
         self.stdout.move_cursor_up(1)?;
-        #[allow(clippy::integer_arithmetic)]
-        self.stdout.move_cursor_right(VALUE_ENTRY_LINE.len() + 1)?;
+        self.stdout.move_cursor_right(VALUE_ENTRY_LINE_LENGTH)?;
 
         Ok(())
     }
@@ -124,6 +124,7 @@ impl Tui {
     pub fn highlight_and_render(&self, index: &str, available_scripts: &[String]) -> Result<()> {
         let index_as_number: usize = index.parse()?;
         // self.stdout.clear_last_lines(available_scripts.len() + 1)?;
+
         self.clear()?;
         self.intro()?;
         for (i, element) in available_scripts.iter().enumerate() {
@@ -147,8 +148,7 @@ impl Tui {
 
         self.write_line(VALUE_ENTRY_LINE.green())?;
         self.stdout.move_cursor_up(1)?;
-        #[allow(clippy::integer_arithmetic)]
-        self.stdout.move_cursor_right(VALUE_ENTRY_LINE.len() + 1)?;
+        self.stdout.move_cursor_right(VALUE_ENTRY_LINE_LENGTH)?;
 
         Ok(())
     }
