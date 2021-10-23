@@ -372,19 +372,17 @@ fn main() -> Result<()> {
 
         // Process midi received messages
         if let Ok(message) = from_midi_in.try_recv() {    
-            loop {
-                match call_midi_listen_with(&message, &mut runtime) {
-                    Ok(_) => break,
-                    Err(err) => {
-                        tui.clear()?;
-                        // TODO: maybe downcast ref here
-                        if let RuntimeErrorType::StringError(error_message) = err.error {
-                            tui.show_error(&context.chosen_script_path, &error_message)?;
-                        }
-                        if try_debug(&tui,&from_watcher, &mut runtime, &mut context).is_ok() {
-                            break;
-                        };
+            match call_midi_listen_with(&message, &mut runtime) {
+                Ok(_) => continue,
+                Err(err) => {
+                    tui.clear()?;
+                    // TODO: maybe downcast ref here
+                    if let RuntimeErrorType::StringError(error_message) = err.error {
+                        tui.show_error(&context.chosen_script_path, &error_message)?;
                     }
+                    if try_debug(&tui,&from_watcher, &mut runtime, &mut context).is_ok() {
+                        continue;
+                    };
                 }
             }
         }
