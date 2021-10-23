@@ -30,7 +30,7 @@ As soon as you select a script from the enumerated list by entering the index nu
 
 ### Editing
 
-When an instance of **mep** is running. `.mep` folder is being watched for changes. Editing your scripts will be reflected immediately.
+When an instance of **mep** is running. `.mep` folder is being watched for changes. Editing, renaming, creating or removing your scripts will be reflected immediately.
 
 Look for info in the [koto main repository](https://github.com/koto-lang/koto) to see if there is syntax highlighting available for your editor.
 
@@ -54,16 +54,16 @@ Look for info in the [koto main repository](https://github.com/koto-lang/koto) t
 
 - _How may I see what is available in `koto_midi` library to use?_
 
-  Currently if you visit the [repository](https://github.com/alisomay/koto_midi) and follow the instructions to run tests, a complete API will be printed to `stdout`. You can take this as a reference. For sure in the future a more ergonomic way will be introduced.
+  Please check the comprehensive [API reference](./api.md) to see what is available.
+
+  Another option is to visit the [repository](https://github.com/alisomay/koto_midi) and follow the instructions to run tests, a complete API will be printed to `stdout`.
 
 - _How may I debug my scripts?_
 
-  Errors in your scripts would navigate you to a new screen and show you the koto error.
+  Errors in your scripts would navigate you to a new screen and show you the error.
   **mep** will let you know which script caused the error and wait for changes.
 
-  After you fixed your erroring script in `~/.mep` folder, it will move to the screen where you can choose your scripts again.
-
-  Please check [todo](#todo) section for some exceptions to this behavior.
+  After you fixed your erroring script in `~/.mep` folder and save, it will automatically move to the screen where you can choose your scripts again.
 
 ## Building
 
@@ -93,6 +93,5 @@ A release will be made when required stability is achieved.
 
 ### Todo
 
-- Do not panic in `runtime_error!` macros. Fall back to watcher and notify user to fix the script.
 - Improve code quality.
 - Add tests where possible.
