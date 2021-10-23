@@ -1,6 +1,8 @@
-# A simple event processor script which echoes the same messages back to sender.
+# A simple event processor script which parses and
+# echoes the same messages back to sender.
 
 import midi
 
 midi.listen = |message| 
+  message = midi.parse message
   midi.send message.pack()
