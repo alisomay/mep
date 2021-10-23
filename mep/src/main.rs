@@ -73,7 +73,6 @@ impl From<(PathBuf,Vec<String>,usize,String,String)> for Context {
     }
 }
 
-// TODO: Either determine the right error type for main or leave a trait object.
 fn main() -> Result<()> {
     let matches = App::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
@@ -213,7 +212,6 @@ fn main() -> Result<()> {
                     DebouncedEvent::Error(err, path) => {
                         to_main.send(WatcherToMainMessage::Error(err, path))?;
                     },
-                    // TODO: Handle some of these possible events
                     DebouncedEvent::Write(_) | DebouncedEvent::Remove(_) | DebouncedEvent::Chmod(_) | DebouncedEvent::Rescan | DebouncedEvent::Rename(_,_) => {
                         // Currently ignoring these.
                         // Rename event is actually a real mv.
@@ -288,20 +286,20 @@ fn main() -> Result<()> {
                 #[allow(clippy::as_conversions)]
                 // These are all fine because the value of `byte` is checked if it is in u8 range before.
                 ValueNumber::I64(byte) if (0..=255).contains(&byte) => Ok(byte as u8),
-                // TODO: Do not fail with these errors but give user a notification to fix the script or not?
-                // Send the last value through a channel with the error message, then loop it through the watcher.
                 _ => {
-                    midi_send_error_to_main.send(send_error_message.to_string()).expect("TODO");
-                    Err(())                          
+                    // `unwrap()` will always succeed channel receiver is in main.
+                    #[allow(clippy::unwrap_used)]
+                    midi_send_error_to_main.send(send_error_message.to_string()).unwrap();
+                    Err(())
                 }
             } } else {
-                // TODO: Do not fail with these errors but give user a notification to fix the script or not?
-                // Send the last value through a channel with the error message, then loop it through the watcher.
-                midi_send_error_to_main.send(send_error_message.to_string()).expect("TODO");
+                // `unwrap()` will always succeed succeed channel receiver is in main.
+                #[allow(clippy::unwrap_used)]
+                midi_send_error_to_main.send(send_error_message.to_string()).unwrap();
                 Err(()) 
             }).collect();
             if let Ok(msg) = msg {
-                // `&msg.unwrap()` will always succeed.
+                // `lock.unwrap()` will always succeed no one else locks it.
                 #[allow(clippy::unwrap_used)]
                 if let Err(e) = mep_out_port.lock().unwrap().send(&msg[..]) {
                     midi_send_error_to_main.send(format!("Error when trying to send midi message: {}", e.to_string()));
@@ -428,8 +426,6 @@ fn main() -> Result<()> {
 
             }
             Err(TryRecvError::Empty) => {
-                
-                // TODO: This will not work! Change logic here.      
                 if try_debug(&tui,&from_watcher, &mut runtime, &mut context).is_ok() {
                     continue;
                 }  
@@ -792,7 +788,6 @@ pub fn copy_directory_contents<U: AsRef<Path>, V: AsRef<Path>>(from: U, to: V) -
                         fs::copy(&path, &dest_path)?;
                     }
                     None => {
-                        // TODO: Add it to MepError maybe?
                         return Err(anyhow!("failed: {:?}", path));
                     }
                 }
