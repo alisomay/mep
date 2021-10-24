@@ -25,15 +25,22 @@
 
 mod tui;
 use dirs::home_dir;
-use std::{fs, io::stdin, path::{Path, PathBuf}, sync::mpsc::channel, sync::{
+use std::{
+    fs,
+    io::stdin,
+    path::{Path, PathBuf},
+    sync::mpsc::channel,
+    sync::{
         mpsc::{Receiver, TryRecvError},
         Arc, Mutex,
-    }, time::Duration};
+    },
+    time::Duration,
+};
 use tui::{Tui, BULB};
 
 use koto::{
     runtime::{RuntimeError, RuntimeErrorType, Value, ValueList, ValueNumber},
-    Koto
+    Koto,
 };
 use midir::{
     os::unix::{VirtualInput, VirtualOutput},
@@ -53,24 +60,24 @@ enum WatcherToMainMessage {
     NoticeWrite(PathBuf),
     NoticeRemove(PathBuf),
     Create(PathBuf),
-    Error(notify::Error,Option<PathBuf>),
+    Error(notify::Error, Option<PathBuf>),
 }
 #[derive(Debug)]
 struct Context {
     scripts_folder_path: PathBuf,
     available_scripts: Vec<String>,
     chosen_index_checked: usize,
-    chosen_script:String,
-    chosen_script_path:String
+    chosen_script: String,
+    chosen_script_path: String,
 }
-impl From<(PathBuf,Vec<String>,usize,String,String)> for Context {
-    fn from(members:(PathBuf,Vec<String>,usize,String,String)) -> Self {
+impl From<(PathBuf, Vec<String>, usize, String, String)> for Context {
+    fn from(members: (PathBuf, Vec<String>, usize, String, String)) -> Self {
         Self {
             scripts_folder_path: members.0,
             available_scripts: members.1,
             chosen_index_checked: members.2,
             chosen_script: members.3,
-            chosen_script_path: members.4
+            chosen_script_path: members.4,
         }
     }
 }
@@ -155,9 +162,8 @@ fn main() -> Result<()> {
         )?;
     }
 
-
     let mut available_scripts = vec![];
-    collect_available_scripts_to(&mut available_scripts,&scripts_folder_path)?;
+    collect_available_scripts_to(&mut available_scripts, &scripts_folder_path)?;
 
     tui.clear()?;
     tui.intro()?;
@@ -179,12 +185,13 @@ fn main() -> Result<()> {
     let _watcher_thread = std::thread::spawn(move || -> Result<()> {
         fn is_koto_script(path: &Path) -> Result<()> {
             // Is meaningful errors needed here?
-            path.extension().map_or_else(|| Err(anyhow!("File does not have any extension.")), |extension| match extension.to_str() {
-                    Some(extension) if "koto" == extension => {
-                       Ok(())
-                    }                    
-                    None | Some(_) => Err(anyhow!("File does not have a \".koto\" extension.")) 
-            })
+            path.extension().map_or_else(
+                || Err(anyhow!("File does not have any extension.")),
+                |extension| match extension.to_str() {
+                    Some(extension) if "koto" == extension => Ok(()),
+                    None | Some(_) => Err(anyhow!("File does not have a \".koto\" extension.")),
+                },
+            )
         }
 
         loop {
@@ -206,15 +213,19 @@ fn main() -> Result<()> {
                             to_main.send(WatcherToMainMessage::NoticeRemove(path))?;
                         }
                     }
-                    DebouncedEvent::Create(path) => {    
+                    DebouncedEvent::Create(path) => {
                         if is_koto_script(&path).is_ok() {
                             to_main.send(WatcherToMainMessage::Create(path))?;
                         }
                     }
                     DebouncedEvent::Error(err, path) => {
                         to_main.send(WatcherToMainMessage::Error(err, path))?;
-                    },
-                    DebouncedEvent::Write(_) | DebouncedEvent::Remove(_) | DebouncedEvent::Chmod(_) | DebouncedEvent::Rescan | DebouncedEvent::Rename(_,_) => {
+                    }
+                    DebouncedEvent::Write(_)
+                    | DebouncedEvent::Remove(_)
+                    | DebouncedEvent::Chmod(_)
+                    | DebouncedEvent::Rescan
+                    | DebouncedEvent::Rename(_, _) => {
                         // Currently ignoring these.
                         // Rename event is actually a real mv.
                     }
@@ -257,7 +268,6 @@ fn main() -> Result<()> {
         &available_scripts[chosen_index_checked],
     )));
 
-
     let (mep_in, mep_out, input_port_name, output_port_name) = init_midi_io(&matches)?;
 
     let mep_out_port = Arc::new(Mutex::new(
@@ -274,44 +284,57 @@ fn main() -> Result<()> {
     let mut midi_module = koto_midi::make_module();
     let send_error_message = "Error calling \"midi.send\": Wrong argument type, please try to use a list of bytes (integers ranged to 0..=255) as an argument. Ex. [144, 65, 127]";
 
-    
     // Add "midi.send" function
     let (midi_send_error_to_main, midi_send_errors) = std::sync::mpsc::sync_channel(256);
-    midi_module.add_fn("send", move |vm, args| if let [Value::List(message)] = vm.get_args(args) {
-        let msg: Result<Vec<u8>,_> = message
-            .data()
-            .iter()
-            .map(|value| if let Value::Number(num) = *value { match num {
-                #[allow(clippy::cast_sign_loss)]
-                #[allow(clippy::cast_possible_truncation)]
-                #[allow(clippy::as_conversions)]
-                // These are all fine because the value of `byte` is checked if it is in u8 range before.
-                ValueNumber::I64(byte) if (0..=255).contains(&byte) => Ok(byte as u8),
-                _ => {
-                    // `unwrap()` will always succeed channel receiver is in main.
-                    #[allow(clippy::unwrap_used)]
-                    midi_send_error_to_main.send(send_error_message.into()).unwrap();
-                    Err(())
-                }
-            } } else {
-                // `unwrap()` will always succeed succeed channel receiver is in main.
-                #[allow(clippy::unwrap_used)]
-                midi_send_error_to_main.send(send_error_message.into()).unwrap();
-                Err(()) 
-            }).collect();
+    midi_module.add_fn("send", move |vm, args| {
+        if let [Value::List(message)] = vm.get_args(args) {
+            let msg: Result<Vec<u8>, _> = message
+                .data()
+                .iter()
+                .map(|value| {
+                    if let Value::Number(num) = *value {
+                        match num {
+                            #[allow(clippy::cast_sign_loss)]
+                            #[allow(clippy::cast_possible_truncation)]
+                            #[allow(clippy::as_conversions)]
+                            // These are all fine because the value of `byte` is checked if it is in u8 range before.
+                            ValueNumber::I64(byte) if (0..=255).contains(&byte) => Ok(byte as u8),
+                            _ => {
+                                // `unwrap()` will always succeed channel receiver is in main.
+                                #[allow(clippy::unwrap_used)]
+                                midi_send_error_to_main
+                                    .send(send_error_message.into())
+                                    .unwrap();
+                                Err(())
+                            }
+                        }
+                    } else {
+                        // `unwrap()` will always succeed succeed channel receiver is in main.
+                        #[allow(clippy::unwrap_used)]
+                        midi_send_error_to_main
+                            .send(send_error_message.into())
+                            .unwrap();
+                        Err(())
+                    }
+                })
+                .collect();
             if let Ok(midi_message_to_send) = msg {
                 // `lock.unwrap()` will always succeed no one else locks it.
                 #[allow(clippy::unwrap_used)]
                 if let Err(e) = mep_out_port.lock().unwrap().send(&midi_message_to_send[..]) {
                     // `unwrap()` will always succeed succeed channel receiver is in main.
-                    midi_send_error_to_main.send(format!("Error when trying to send midi message: {}", e)).unwrap();
+                    midi_send_error_to_main
+                        .send(format!("Error when trying to send midi message: {}", e))
+                        .unwrap();
                 }
             }
-        Ok(Value::Empty)
-    } else {
-        midi_send_error_to_main.send(send_error_message.to_owned())
-        .map(|_| Value::Empty)
-        .map_err(|err| RuntimeError::from(err.to_string()))
+            Ok(Value::Empty)
+        } else {
+            midi_send_error_to_main
+                .send(send_error_message.to_owned())
+                .map(|_| Value::Empty)
+                .map_err(|err| RuntimeError::from(err.to_string()))
+        }
     });
 
     // Make the handler call "midi.listen" function
@@ -341,19 +364,21 @@ fn main() -> Result<()> {
     prelude.add_map("midi", midi_module);
     prelude.add_value("random", koto_random::make_module());
 
-
-    let mut context = Context::from((scripts_folder_path,available_scripts,chosen_index_checked,chosen_script,chosen_script_path));
-
+    let mut context = Context::from((
+        scripts_folder_path,
+        available_scripts,
+        chosen_index_checked,
+        chosen_script,
+        chosen_script_path,
+    ));
 
     // Tries to compile the chosen script with dynamic error handling.
-    compile_run_block_until_valid(
-        &tui,
-        &from_watcher,
-        &mut context,
-        &mut runtime,
-    )?;
+    compile_run_block_until_valid(&tui, &from_watcher, &mut context, &mut runtime)?;
 
-    tui.highlight_and_render(&chosen_index_checked.to_string(), &context.available_scripts)?;
+    tui.highlight_and_render(
+        &chosen_index_checked.to_string(),
+        &context.available_scripts,
+    )?;
 
     runtime.run()?;
 
@@ -371,7 +396,7 @@ fn main() -> Result<()> {
         std::thread::sleep(std::time::Duration::from_micros(250));
 
         // Process midi received messages
-        if let Ok(message) = from_midi_in.try_recv() {    
+        if let Ok(message) = from_midi_in.try_recv() {
             match call_midi_listen_with(&message, &mut runtime) {
                 Ok(_) => continue,
                 Err(err) => {
@@ -380,22 +405,22 @@ fn main() -> Result<()> {
                     if let RuntimeErrorType::StringError(error_message) = err.error {
                         tui.show_error(&context.chosen_script_path, &error_message)?;
                     }
-                    if try_debug(&tui,&from_watcher, &mut runtime, &mut context).is_ok() {
+                    if try_debug(&tui, &from_watcher, &mut runtime, &mut context).is_ok() {
                         continue;
                     };
                 }
             }
         }
-        if let Ok(error_message) = midi_send_errors.try_recv() {        
+        if let Ok(error_message) = midi_send_errors.try_recv() {
             tui.clear()?;
-            tui.show_error(&context.chosen_script_path, &error_message)?;                        
-            if try_debug(&tui,&from_watcher, &mut runtime, &mut context).is_ok() {
+            tui.show_error(&context.chosen_script_path, &error_message)?;
+            if try_debug(&tui, &from_watcher, &mut runtime, &mut context).is_ok() {
                 continue;
             }
         }
 
         match stdin_channel.try_recv() {
-            Ok(mut user_choice) => {        
+            Ok(mut user_choice) => {
                 context.chosen_index_checked = if let Ok(idx) = user_choice.trim().parse() {
                     idx
                 } else {
@@ -410,25 +435,23 @@ fn main() -> Result<()> {
                     tui.ignore_choice()?;
                     continue;
                 }
-                
-                context.chosen_script_path = context.available_scripts[context.chosen_index_checked].clone();
+
+                context.chosen_script_path =
+                    context.available_scripts[context.chosen_index_checked].clone();
                 context.chosen_script = fs::read_to_string(&context.chosen_script_path)?;
 
                 // Tries to compile the chosen script with dynamic error handling.
-                compile_run_block_until_valid(
-                    &tui,
-                    &from_watcher,
-                    &mut context,
-                    &mut runtime,
+                compile_run_block_until_valid(&tui, &from_watcher, &mut context, &mut runtime)?;
+
+                tui.highlight_and_render(
+                    &context.chosen_index_checked.to_string(),
+                    &context.available_scripts,
                 )?;
-
-                tui.highlight_and_render(&context.chosen_index_checked.to_string(), &context.available_scripts)?;
-
             }
             Err(TryRecvError::Empty) => {
-                if try_debug(&tui,&from_watcher, &mut runtime, &mut context).is_ok() {
+                if try_debug(&tui, &from_watcher, &mut runtime, &mut context).is_ok() {
                     continue;
-                }  
+                }
             }
             // TODO: Maybe join the thread? Currently erroring and terminating.
             Err(TryRecvError::Disconnected) => bail!("stdin channel disconnected!"),
@@ -438,8 +461,10 @@ fn main() -> Result<()> {
     // unreachable
 }
 
-
-fn collect_available_scripts_to(vector_to_collect_to: &mut Vec<String>, scripts_folder_path: &Path) -> Result<()> {
+fn collect_available_scripts_to(
+    vector_to_collect_to: &mut Vec<String>,
+    scripts_folder_path: &Path,
+) -> Result<()> {
     let script_paths = fs::read_dir(&scripts_folder_path)?;
     // List and collect all scripts which has a ".koto" extension.
     for path in script_paths {
@@ -460,7 +485,7 @@ fn collect_available_scripts_to(vector_to_collect_to: &mut Vec<String>, scripts_
                 continue;
             }
         }
-    };
+    }
     Ok(())
 }
 
@@ -471,47 +496,53 @@ fn get_scripts_folder_path(home: &str) -> PathBuf {
     scripts_folder_path
 }
 
-fn call_midi_listen_with(message: &[u8], runtime: &mut Koto) -> Result<(), RuntimeError> {
-    match runtime.prelude().data().get_with_string("midi") {
-        Some(midi_module) => match midi_module {
-            Value::Map(midi_module) => match midi_module.data().get_with_string("listen") {
-                Some(message_listener) => match message_listener {
-                    Value::Function(_) => {
-                        // Make a list of koto values from u8 slice.
-                        let message_values = message
-                            .iter()
-                            .map(|byte| Value::Number(byte.into()))
-                            .collect::<Vec<Value>>();
-                        // Call "midi.listen" function in script with the midi message.
-                        runtime
-                            .call_function(
-                                message_listener.clone(),
-                                &[Value::List(ValueList::from_slice(&message_values))],
-                            )
-                            .map(|_| ())
-                            .map_err(|err|  
-                                 RuntimeError::with_prefix(RuntimeError::from(format!("Calling \"midi.listen\" is failed, {}",err.to_string())),&"Error".magenta().to_string())
-                            )
-                    }
-                    _ => Err(RuntimeError::with_prefix(
-                        RuntimeError::from("\"midi.listen\" is defined but it is not a function".to_owned()),
-                        &"Error".magenta().to_string(),
-                    )),
-                },
-                None => Err(RuntimeError::with_prefix(
-                    RuntimeError::from("Try defining a function as \"midi.listen\". If not there please try importing \"midi\" on top of your script like \"import midi\".".to_owned()),
-                    &"Error".magenta().to_string(),
-                )),
-            },
-            _ => Err(RuntimeError::with_prefix(
-                RuntimeError::from("\"midi\" has been found but it is not a map. Try importing \"midi\" on top of your script like \"import midi\". And do not use the same name further.".to_owned()),
-                &"Error".magenta().to_string(),
-            )),
-        },
-        None => Err(RuntimeError::with_prefix(
-            RuntimeError::from("Try importing \"midi\" on top of your script like \"import midi\"".to_owned()),
+macro_rules! midi_listen_error {
+    ($l:literal) => {
+        Err(RuntimeError::with_prefix(
+            RuntimeError::from($l.to_owned()),
             &"Error".magenta().to_string(),
-        )),
+        ))
+    };
+}
+
+#[allow(clippy::option_if_let_else)]
+fn call_midi_listen_with(message: &[u8], runtime: &mut Koto) -> Result<(), RuntimeError> {
+    if let Some(midi_value) = runtime.prelude().data().get_with_string("midi") {
+        if let Value::Map(midi_module_map) = midi_value {
+            if let Some(message_listener) = midi_module_map.data().get_with_string("listen") {
+                if let Value::Function(_) = message_listener {
+                    // Make a list of koto values from u8 slice.
+                    let message_values = message
+                        .iter()
+                        .map(|byte| Value::Number(byte.into()))
+                        .collect::<Vec<Value>>();
+                    // Call "midi.listen" function in script with the midi message.
+                    runtime
+                        .call_function(
+                            message_listener.clone(),
+                            &[Value::List(ValueList::from_slice(&message_values))],
+                        )
+                        .map(|_| ())
+                        .map_err(|err| {
+                            RuntimeError::with_prefix(
+                                RuntimeError::from(format!(
+                                    "Calling \"midi.listen\" is failed, {}",
+                                    err.to_string()
+                                )),
+                                &"Error".magenta().to_string(),
+                            )
+                        })
+                } else {
+                    midi_listen_error!("\"midi.listen\" is defined but it is not a function")
+                }
+            } else {
+                midi_listen_error!("Try defining a function as \"midi.listen\". If not there please try importing \"midi\" on top of your script like \"import midi\".")
+            }
+        } else {
+            midi_listen_error!("\"midi\" has been found but it is not a map. Try importing \"midi\" on top of your script like \"import midi\". And do not use the same name further.")
+        }
+    } else {
+        midi_listen_error!("Try importing \"midi\" on top of your script like \"import midi\"")
     }
 }
 
@@ -554,25 +585,24 @@ fn spawn_stdin_channel() -> Receiver<String> {
     from_stdin
 }
 
-
-fn try_debug(tui: &Tui, watcher_channel:&Receiver<WatcherToMainMessage>, runtime: &mut Koto, context: &mut Context) -> Result<()> {
+fn try_debug(
+    tui: &Tui,
+    watcher_channel: &Receiver<WatcherToMainMessage>,
+    runtime: &mut Koto,
+    context: &mut Context,
+) -> Result<()> {
     if let Ok(message_from_watcher) = watcher_channel.try_recv() {
         use WatcherToMainMessage::*;
         match message_from_watcher {
-            NoticeWrite(path) =>  {
+            NoticeWrite(path) => {
                 // We need to make this path shared.
                 context.chosen_script_path = path.to_string_lossy().into();
                 context.chosen_script = fs::read_to_string(&context.chosen_script_path)?;
-                if compile_run_block_until_valid(
-                    tui,
-                    watcher_channel,
-                    context,
-                    runtime,
-                ).is_ok() {   
+                if compile_run_block_until_valid(tui, watcher_channel, context, runtime).is_ok() {
                     // Script fixed or there was no problem.
                     tui.highlight_and_render(
-                    &context.chosen_index_checked.to_string(),
-                    &context.available_scripts,
+                        &context.chosen_index_checked.to_string(),
+                        &context.available_scripts,
                     )?;
                     return Ok(());
                 }
@@ -580,13 +610,20 @@ fn try_debug(tui: &Tui, watcher_channel:&Receiver<WatcherToMainMessage>, runtime
             NoticeRemove(_) => {
                 // Get diff
                 let mut new_available_scripts = vec![];
-                collect_available_scripts_to(&mut new_available_scripts, &context.scripts_folder_path)?;
-                let modified_script_path: String = new_available_scripts.clone().into_iter().filter(|item| !context.available_scripts.contains(item)).collect();
+                collect_available_scripts_to(
+                    &mut new_available_scripts,
+                    &context.scripts_folder_path,
+                )?;
+                let modified_script_path: String = new_available_scripts
+                    .clone()
+                    .into_iter()
+                    .filter(|item| !context.available_scripts.contains(item))
+                    .collect();
                 // dbg!(&context.chosen_script_path,&path,modified_script_path);
                 // Replace available scripts.
-                std::mem::swap(&mut context.available_scripts,&mut new_available_scripts);
-                
-                if fs::read_to_string(&context.chosen_script_path).is_err() { 
+                std::mem::swap(&mut context.available_scripts, &mut new_available_scripts);
+
+                if fs::read_to_string(&context.chosen_script_path).is_err() {
                     // dbg!(&context.chosen_script_path,&path);
                     // std::thread::sleep(Duration::from_secs(4));
                     // Either the currently chosen script is removed or renamed.
@@ -599,9 +636,8 @@ fn try_debug(tui: &Tui, watcher_channel:&Receiver<WatcherToMainMessage>, runtime
                             if *path == context.chosen_script_path {
                                 context.chosen_index_checked = i;
                             }
-                        }   
-                    }
-                    else {
+                        }
+                    } else {
                         // Script is removed, check if there are available scripts.
                         // "~/.mep" folder is empty
                         if context.available_scripts.is_empty() {
@@ -612,54 +648,52 @@ fn try_debug(tui: &Tui, watcher_channel:&Receiver<WatcherToMainMessage>, runtime
                                 "There are no event processor scripts found in \"~/.mep\". Maybe put a couple?".blue()
                             );
                         }
-                        
+
                         // Fall back to first script in the list
                         context.chosen_script = fs::read_to_string(&context.available_scripts[0])?;
                         context.chosen_script_path = context.available_scripts[0].clone();
                         context.chosen_index_checked = 0;
                     }
-                     // Run new script
-                    if compile_run_block_until_valid(
-                        tui,
-                        watcher_channel,
-                        context,
-                        runtime,
-                    ).is_ok() {   
+                    // Run new script
+                    if compile_run_block_until_valid(tui, watcher_channel, context, runtime).is_ok()
+                    {
                         // Script fixed or there was no problem.
                         tui.highlight_and_render(
-                        &context.chosen_index_checked.to_string(),
-                        &context.available_scripts,
-                        )?;    
+                            &context.chosen_index_checked.to_string(),
+                            &context.available_scripts,
+                        )?;
                         return Ok(());
                     }
-                }
-                else {
+                } else {
                     // Another script is removed.
                     // Just re-render.
-    
+
                     tui.highlight_and_render(
-                    &context.chosen_index_checked.to_string(),
-                    &context.available_scripts,
+                        &context.chosen_index_checked.to_string(),
+                        &context.available_scripts,
                     )?;
                     return Ok(());
                 }
-            },
+            }
             Create(_) => {
                 // Just re-list the scripts with the existing choice.
                 let mut new_available_scripts = vec![];
-                collect_available_scripts_to(&mut new_available_scripts, &context.scripts_folder_path)?;
-                std::mem::swap(&mut context.available_scripts,&mut new_available_scripts);
+                collect_available_scripts_to(
+                    &mut new_available_scripts,
+                    &context.scripts_folder_path,
+                )?;
+                std::mem::swap(&mut context.available_scripts, &mut new_available_scripts);
 
                 tui.highlight_and_render(
-                &context.chosen_index_checked.to_string(),
-                &context.available_scripts,
+                    &context.chosen_index_checked.to_string(),
+                    &context.available_scripts,
                 )?;
                 return Ok(());
-            },
-            Error(err,path) => {
+            }
+            Error(err, path) => {
                 let p: String = match path {
-                    Some (path) => path.to_string_lossy().into(),
-                    None => "".into()
+                    Some(path) => path.to_string_lossy().into(),
+                    None => "".into(),
                 };
                 tui.clear_lines(1)?;
                 bail!(
@@ -673,7 +707,6 @@ fn try_debug(tui: &Tui, watcher_channel:&Receiver<WatcherToMainMessage>, runtime
         }
     }
     Err(anyhow!("No change in \"~/.mep\" folder detected."))
-
 }
 
 fn compile_run_block_until_valid(
@@ -684,9 +717,7 @@ fn compile_run_block_until_valid(
 ) -> Result<()> {
     match runtime.compile(&context.chosen_script) {
         Ok(chunk) => match runtime.run_chunk(chunk) {
-            Ok(_) => {
-                Ok(())
-            },
+            Ok(_) => Ok(()),
             Err(err) => {
                 // Runtime time error found in script.
                 tui.clear()?;
@@ -696,12 +727,7 @@ fn compile_run_block_until_valid(
                         // A fix attempt had been made.
                         context.chosen_script_path = path.to_string_lossy().into();
                         context.chosen_script = fs::read_to_string(&context.chosen_script_path)?;
-                        match compile_run_block_until_valid(
-                            tui,
-                            from_watcher,
-                            context,
-                            runtime,
-                        ) {
+                        match compile_run_block_until_valid(tui, from_watcher, context, runtime) {
                             Ok(_) => {
                                 // Script is fixed.
                                 return Ok(());
@@ -724,12 +750,7 @@ fn compile_run_block_until_valid(
                     // A fix attempt had been made.
                     context.chosen_script_path = path.to_string_lossy().into();
                     context.chosen_script = fs::read_to_string(&context.chosen_script_path)?;
-                    match compile_run_block_until_valid(
-                        tui,
-                        from_watcher,
-                        context,
-                        runtime,
-                    ) {
+                    match compile_run_block_until_valid(tui, from_watcher, context, runtime) {
                         Ok(_) => {
                             // Script is fixed.
                             return Ok(());
